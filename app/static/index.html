@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Claro que Eu vendo!</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <script>
+    tailwind.config={darkMode:'class',theme:{extend:{colors:{brand:{50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12'},surface:{900:'#0a0a0a',800:'#141414',700:'#1c1c1c',600:'#262626',500:'#333333'}},fontFamily:{sans:['DM Sans','sans-serif'],mono:['JetBrains Mono','monospace']}}}};
+  </script>
+  <style>
+    *{scrollbar-width:thin;scrollbar-color:#333 #0a0a0a}::selection{background:#f9731644}
+    .msg-enter{animation:msgIn .3s ease-out both}
+    @keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .typing-dot{animation:blink 1.4s infinite both}.typing-dot:nth-child(2){animation-delay:.2s}.typing-dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+    .fade-in{animation:fadeIn .4s ease-out both}@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    .tab-active{border-color:#f97316;color:#f97316}
+    .toast{animation:toastIn .3s ease-out both}@keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  </style>
+</head>
+<body class="bg-surface-900 text-gray-200 font-sans min-h-screen flex flex-col">
+
+<!-- ==================== LOGIN ==================== -->
+<div id="login-screen" class="min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4">V!</div>
+      <h1 class="text-xl font-bold text-white">Claro que Eu vendo!</h1>
+      <p id="login-subtitle" class="text-xs text-gray-500 mt-1 font-mono">faça login para continuar</p>
+    </div>
+    <form id="login-form" class="space-y-3">
+      <input id="login-user" type="text" placeholder="Usuário" required class="w-full bg-surface-700 border border-surface-500 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"/>
+      <input id="login-pass" type="password" placeholder="Senha" required class="w-full bg-surface-700 border border-surface-500 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"/>
+      <button type="submit" class="w-full py-3 bg-brand-600 hover:bg-brand-500 rounded-xl text-white text-sm font-semibold transition-colors">Entrar</button>
+      <p id="login-error" class="text-xs text-red-400 text-center hidden"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== APP (hidden until login) ==================== -->
+<div id="app-container" class="hidden min-h-screen flex flex-col">
+
+  <!-- HEADER + TABS -->
+  <header class="border-b border-surface-600 bg-surface-800/80 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="h-12 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-xs">V</div>
+          <span class="text-sm font-bold text-white hidden sm:inline">Claro que Eu vendo!</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="user-label" class="text-[10px] text-gray-500 font-mono"></span>
+          <button onclick="logout()" class="text-[10px] text-gray-500 hover:text-brand-400 font-mono">sair</button>
+        </div>
+      </div>
+      <!-- TABS -->
+      <div class="flex gap-0 -mb-px">
+        <button onclick="switchTab('chat')" id="tab-chat" class="tab-active px-4 py-2 text-xs font-semibold border-b-2 border-transparent transition-colors">Chat</button>
+        <button onclick="switchTab('pitch')" id="tab-pitch" class="px-4 py-2 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors">Pitch</button>
+        <button onclick="switchTab('catalog')" id="tab-catalog" class="px-4 py-2 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors">Catálogo</button>
+        <button onclick="switchTab('skills')" id="tab-skills" class="px-4 py-2 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors">Skills</button>
+        <button onclick="switchTab('users')" id="tab-users" class="hidden px-4 py-2 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors">Usuários</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== TAB: CHAT ===== -->
+  <div id="view-chat" class="flex-1 flex flex-col max-w-5xl w-full mx-auto">
+    <!-- Pitch selector bar -->
+    <div class="px-4 py-2 border-b border-surface-700 flex items-center gap-2 flex-wrap">
+      <label class="text-[10px] text-gray-500 font-mono">Empresa:</label>
+      <input id="company-input" type="text" placeholder="CNPJ ou Nome da empresa *" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-52"/>
+      <input id="city-input" type="text" placeholder="Cidade *" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-36"/>
+      <button onclick="startPitch()" id="start-pitch-btn" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-surface-600 disabled:cursor-not-allowed rounded-lg text-white text-[10px] font-semibold" disabled>Posicionar Empresa</button>
+      <span id="pitch-label" class="text-[10px] text-gray-500 font-mono ml-2"></span>
+    </div>
+
+    <!-- Chat messages -->
+    <div id="chat-area" class="flex-1 overflow-y-auto px-4 py-4 space-y-3" style="max-height:calc(100vh - 210px)">
+      <div id="welcome" class="fade-in flex flex-col items-center justify-center py-12 text-center">
+        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xl font-bold mb-4">V!</div>
+        <h2 class="text-lg font-bold text-white mb-1">Preparado para vender?</h2>
+        <p class="text-xs text-gray-400 max-w-md mb-2">Informe a empresa e cidade acima, clique em "Posicionar Empresa" e as opções serão liberadas.</p>
+      </div>
+      <div id="quick-actions" class="flex justify-center">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+          <button disabled onclick="qaAction('briefing')" class="qa-btn group p-3 rounded-xl bg-surface-700 border border-surface-600 hover:border-brand-500/50 transition-all text-left disabled:opacity-40 disabled:pointer-events-none">
+            <p class="text-xs font-semibold text-brand-400 mb-0.5">Briefing de Empresa</p>
+            <p class="text-[11px] text-gray-500 group-hover:text-gray-400">Perfil completo + pontos de dor</p>
+          </button>
+          <button disabled onclick="qaAction('perfil')" class="qa-btn group p-3 rounded-xl bg-surface-700 border border-surface-600 hover:border-brand-500/50 transition-all text-left disabled:opacity-40 disabled:pointer-events-none">
+            <p class="text-xs font-semibold text-brand-400 mb-0.5">Perfil do Interlocutor</p>
+            <p class="text-[11px] text-gray-500 group-hover:text-gray-400">Estilo de comunicação + estratégia</p>
+          </button>
+          <button disabled onclick="qaAction('tendencias')" class="qa-btn group p-3 rounded-xl bg-surface-700 border border-surface-600 hover:border-brand-500/50 transition-all text-left disabled:opacity-40 disabled:pointer-events-none">
+            <p class="text-xs font-semibold text-brand-400 mb-0.5">Tendências de Mercado</p>
+            <p class="text-[11px] text-gray-500 group-hover:text-gray-400">Análise setorial atualizada</p>
+          </button>
+          <button disabled onclick="qaAction('panico')" class="qa-btn group p-3 rounded-xl bg-surface-700 border border-surface-600 hover:border-brand-500/50 transition-all text-left disabled:opacity-40 disabled:pointer-events-none">
+            <p class="text-xs font-semibold text-red-400 mb-0.5">Botão de Pânico</p>
+            <p class="text-[11px] text-gray-500 group-hover:text-gray-400">Suporte imediato na negociação</p>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="border-t border-surface-600 bg-surface-800/60 backdrop-blur-md p-3">
+      <form id="chat-form" class="max-w-3xl mx-auto flex gap-2">
+        <textarea id="user-input" rows="1" placeholder="Descreva a empresa, interlocutor ou situação..." class="flex-1 bg-surface-700 border border-surface-500 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-brand-500 transition-all" style="max-height:100px"></textarea>
+        <button type="submit" id="send-btn" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-500 disabled:bg-surface-600 disabled:cursor-not-allowed rounded-xl text-white text-sm font-semibold transition-colors shrink-0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== TAB: PITCH ===== -->
+  <div id="view-pitch" class="hidden flex-1 max-w-5xl w-full mx-auto px-4 py-4 overflow-y-auto" style="max-height:calc(100vh - 100px)">
+    <div class="flex items-center gap-3 mb-4 flex-wrap">
+      <input id="pitch-filter-company" type="text" placeholder="Filtrar por empresa..." class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-48"/>
+      <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
+        <input type="checkbox" id="pitch-filter-liked" class="accent-brand-500" onchange="loadPitches()"/>
+        Somente "Gostei!"
+      </label>
+      <button onclick="loadPitches()" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Filtrar</button>
+    </div>
+    <div id="pitch-list" class="space-y-4"></div>
+  </div>
+
+  <!-- ===== TAB: CATÁLOGO ===== -->
+  <div id="view-catalog" class="hidden flex-1 max-w-5xl w-full mx-auto px-4 py-4 overflow-y-auto" style="max-height:calc(100vh - 100px)">
+    <!-- Header + Actions -->
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <h2 class="text-sm font-bold text-white">Catálogo</h2>
+      <span class="text-[9px] text-gray-600 font-mono">SQLite + Text-to-SQL + NBO</span>
+      <div class="ml-auto flex gap-1">
+        <label class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold cursor-pointer">
+          Importar CSV
+          <input type="file" accept=".csv" class="hidden" onchange="importCSV(this)"/>
+        </label>
+        <button onclick="exportCSV()" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Exportar</button>
+        <button onclick="clearCatalog()" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/50 rounded-lg text-red-300 text-[10px] font-semibold">Limpar</button>
+      </div>
+    </div>
+
+    <!-- Schema info -->
+    <div id="catalog-schema" class="mb-3"></div>
+
+    <!-- SQL Console -->
+    <div class="mb-3 bg-surface-700 border border-surface-600 rounded-xl p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-[10px] text-brand-400 font-mono font-semibold">SQL Console</span>
+        <span class="text-[9px] text-gray-600 font-mono">somente SELECT</span>
+      </div>
+      <div class="flex gap-2">
+        <textarea id="sql-input" rows="2" placeholder="SELECT * FROM produtos WHERE LOWER(nome) LIKE '%crm%' LIMIT 10" class="flex-1 bg-surface-800 border border-surface-600 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 font-mono resize-y" style="min-height:36px"></textarea>
+        <button onclick="runSQL()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold shrink-0 self-end">Executar</button>
+      </div>
+      <div class="flex gap-1 mt-2 flex-wrap">
+        <button onclick="quickSQL('SELECT * FROM produtos LIMIT 20')" class="text-[9px] px-2 py-0.5 bg-surface-600 hover:bg-surface-500 rounded text-gray-400 font-mono">todos</button>
+        <button onclick="quickSQL('SELECT COUNT(*) as total FROM produtos')" class="text-[9px] px-2 py-0.5 bg-surface-600 hover:bg-surface-500 rounded text-gray-400 font-mono">count</button>
+        <button onclick="quickSQL('PRAGMA table_info(produtos)')" class="text-[9px] px-2 py-0.5 bg-surface-600 hover:bg-surface-500 rounded text-gray-400 font-mono">schema</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="catalog-count" class="text-[10px] text-gray-500 font-mono mb-2"></div>
+    <div id="catalog-table-wrap" class="overflow-x-auto"></div>
+  </div>
+
+  <!-- ===== TAB: SKILLS ===== -->
+  <div id="view-skills" class="hidden flex-1 max-w-5xl w-full mx-auto px-4 py-4 overflow-y-auto" style="max-height:calc(100vh - 100px)">
+    <div class="flex items-center gap-2 mb-4 flex-wrap">
+      <h2 class="text-sm font-bold text-white">Skills do Agente</h2>
+      <span class="text-[10px] text-gray-500 font-mono">direcionam o raciocínio para cada tipo de pedido</span>
+      <button onclick="showNewSkillForm()" class="ml-auto px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Novo Skill</button>
+    </div>
+    <!-- New skill form (hidden) -->
+    <div id="new-skill-form" class="hidden mb-4 bg-surface-700 border border-surface-600 rounded-xl p-4">
+      <div class="flex gap-2 mb-2">
+        <input id="new-skill-slug" type="text" placeholder="slug (ex: meu-skill)" class="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-48 font-mono"/>
+        <button onclick="saveNewSkill()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Salvar</button>
+        <button onclick="$('new-skill-form').classList.add('hidden')" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Cancelar</button>
+      </div>
+      <textarea id="new-skill-content" rows="12" placeholder="# Nome do Skill&#10;&#10;## Objetivo&#10;...&#10;&#10;## Quando usar&#10;...&#10;&#10;## Workflow&#10;...&#10;&#10;## Formato de saída&#10;...&#10;&#10;## Regras&#10;..." class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 font-mono resize-y"></textarea>
+    </div>
+    <!-- Skills list -->
+    <div id="skills-list" class="space-y-3"></div>
+    <!-- Skill editor (hidden) -->
+    <div id="skill-editor" class="hidden mt-4 bg-surface-700 border border-surface-600 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span id="skill-editor-title" class="text-sm font-bold text-brand-400"></span>
+        <div class="flex gap-2">
+          <button onclick="saveEditSkill()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Salvar</button>
+          <button onclick="$('skill-editor').classList.add('hidden')" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Fechar</button>
+        </div>
+      </div>
+      <textarea id="skill-editor-content" rows="18" class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-500 font-mono resize-y"></textarea>
+    </div>
+  </div>
+
+  <!-- ===== TAB: USUÁRIOS (root/admin only) ===== -->
+  <div id="view-users" class="hidden flex-1 max-w-5xl w-full mx-auto px-4 py-4 overflow-y-auto" style="max-height:calc(100vh - 100px)">
+    <div class="flex items-center gap-2 mb-4">
+      <h2 class="text-sm font-bold text-white">Gestão de Usuários</h2>
+      <button onclick="showNewUserForm()" class="ml-auto px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Novo Usuário</button>
+    </div>
+    <!-- New user form -->
+    <div id="new-user-form" class="hidden mb-4 bg-surface-700 border border-surface-600 rounded-xl p-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+        <input id="nu-username" type="text" placeholder="Usuário (login)" class="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 font-mono"/>
+        <input id="nu-password" type="password" placeholder="Senha" class="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"/>
+        <input id="nu-display" type="text" placeholder="Nome de exibição" class="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"/>
+        <select id="nu-role" class="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500">
+          <option value="user">Usuário Comum</option>
+          <option value="admin">Administrador</option>
+          <option value="root">Root</option>
+        </select>
+      </div>
+      <textarea id="nu-profile" rows="2" placeholder="Descrição do perfil..." class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 resize-y mb-2"></textarea>
+      <div class="flex gap-2">
+        <button onclick="saveNewUser()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Salvar</button>
+        <button onclick="$('new-user-form').classList.add('hidden')" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Cancelar</button>
+      </div>
+    </div>
+    <!-- Users list -->
+    <div id="users-list" class="space-y-2"></div>
+    <!-- Edit user form -->
+    <div id="edit-user-form" class="hidden mt-4 bg-surface-700 border border-surface-600 rounded-xl p-4">
+      <input type="hidden" id="eu-id"/>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+        <div>
+          <label class="text-[10px] text-gray-500 font-mono">Login</label>
+          <input id="eu-username" type="text" disabled class="w-full bg-surface-900 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-gray-500 font-mono"/>
+        </div>
+        <div>
+          <label class="text-[10px] text-gray-500 font-mono">Nova senha (vazio = manter)</label>
+          <input id="eu-password" type="password" placeholder="••••••••" class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500"/>
+        </div>
+        <div>
+          <label class="text-[10px] text-gray-500 font-mono">Nome de exibição</label>
+          <input id="eu-display" type="text" class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"/>
+        </div>
+        <div>
+          <label class="text-[10px] text-gray-500 font-mono">Tipo</label>
+          <select id="eu-role" class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500">
+            <option value="user">Usuário Comum</option>
+            <option value="admin">Administrador</option>
+            <option value="root">Root</option>
+          </select>
+        </div>
+      </div>
+      <div class="mb-2">
+        <label class="text-[10px] text-gray-500 font-mono">Descrição do perfil</label>
+        <textarea id="eu-profile" rows="2" class="w-full bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500 resize-y"></textarea>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="saveEditUser()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">Salvar</button>
+        <button onclick="$('edit-user-form').classList.add('hidden')" class="px-3 py-1.5 bg-surface-600 hover:bg-surface-500 rounded-lg text-white text-[10px] font-semibold">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="fixed bottom-6 right-6 z-50 hidden"></div>
+
+<script>
+// ==================== STATE ====================
+let AUTH = { token: null, user_id: null, username: '', role: '', display_name: '' };
+let chatHistory = [];
+let currentPitchId = null;
+let currentCompanyContext = null;
+let busy = false;
+
+const $ = id => document.getElementById(id);
+
+// ==================== AUTH ====================
+async function checkFirstUser() {
+  const r = await fetch('/api/v1/auth/has-users');
+  const d = await r.json();
+  if (!d.has_users) {
+    $('login-subtitle').textContent = 'primeiro acesso — cadastre usuário e senha para criar o Super Usuário';
+  }
+}
+checkFirstUser();
+
+$('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('login-error').classList.add('hidden');
+  const username = $('login-user').value.trim();
+  const password = $('login-pass').value;
+  try {
+    const r = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.detail || 'Erro');
+    }
+    const data = await r.json();
+    AUTH = { token: data.token, user_id: data.user_id, username: data.username, role: data.role, display_name: data.display_name };
+    localStorage.setItem('auth', JSON.stringify(AUTH));
+    enterApp();
+  } catch (err) {
+    $('login-error').textContent = err.message;
+    $('login-error').classList.remove('hidden');
+  }
+});
+
+function enterApp() {
+  $('login-screen').classList.add('hidden');
+  $('app-container').classList.remove('hidden');
+  $('app-container').classList.add('flex');
+  $('user-label').textContent = `${AUTH.display_name} (${AUTH.role})`;
+
+  // Módulo Usuários visível apenas para root e admin
+  const isAdmin = AUTH.role === 'root' || AUTH.role === 'admin';
+  $('tab-users').classList.toggle('hidden', !isAdmin);
+}
+
+function logout() {
+  localStorage.removeItem('auth');
+  location.reload();
+}
+
+// Auto-login from localStorage
+const saved = localStorage.getItem('auth');
+if (saved) {
+  try { AUTH = JSON.parse(saved); enterApp(); } catch(e) { localStorage.removeItem('auth'); }
+}
+
+// ==================== TABS ====================
+function switchTab(tab) {
+  ['chat','pitch','catalog','skills','users'].forEach(t => {
+    $(`view-${t}`).classList.toggle('hidden', t !== tab);
+    $(`view-${t}`).classList.toggle('flex', t === tab && t === 'chat');
+    const btn = $(`tab-${t}`);
+    if (btn) {
+      btn.classList.toggle('tab-active', t === tab);
+      btn.classList.toggle('text-gray-500', t !== tab);
+    }
+  });
+  if (tab === 'pitch') loadPitches();
+  if (tab === 'catalog') loadCatalog();
+  if (tab === 'skills') loadSkills();
+  if (tab === 'users') loadUsers();
+}
+
+// ==================== CHAT ====================
+const chatArea = $('chat-area');
+const chatForm = $('chat-form');
+const userInput = $('user-input');
+const sendBtn = $('send-btn');
+
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 100) + 'px';
+});
+userInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatForm.requestSubmit(); }
+});
+
+$('company-input').addEventListener('input', validatePitchFields);
+$('city-input').addEventListener('input', validatePitchFields);
+
+chatForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = userInput.value.trim();
+  if (!text || busy) return;
+  await sendMessage(text);
+});
+
+function fillInput(template) {
+  userInput.value = template;
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 100) + 'px';
+  userInput.focus();
+  const s = template.indexOf('['), e = template.indexOf(']') + 1;
+  if (s !== -1 && e > s) userInput.setSelectionRange(s, e);
+}
+
+function qaAction(type) {
+  if (!currentCompanyContext) { showToast('Posicione a empresa primeiro','warn'); return; }
+  const emp = currentCompanyContext.name;
+  const cid = currentCompanyContext.city;
+  const templates = {
+    briefing: `Pesquise a empresa ${emp} (${cid}) e prepare um briefing completo para reunião de vendas`,
+    perfil: `Analise o perfil do interlocutor da empresa ${emp} (${cid}). O contato é: [NOME DA PESSOA, CARGO]`,
+    tendencias: `Quais são as tendências do setor da empresa ${emp} (${cid}) para PMEs?`,
+    panico: `Estou em reunião com ${emp} (${cid}) e [DESCREVA A SITUAÇÃO]. O que faço?`,
+  };
+  fillInput(templates[type] || '');
+}
+
+async function startPitch() {
+  const name = $('company-input').value.trim();
+  const city = $('city-input').value.trim();
+  if (!name || !city) { showToast('Informe empresa e cidade para iniciar','warn'); return; }
+  const fullName = `${name} — ${city}`;
+  try {
+    const r = await fetch(`/api/v1/pitches/?user_id=${AUTH.user_id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_name: fullName }),
+    });
+    const data = await r.json();
+    currentPitchId = data.id;
+    currentCompanyContext = { name, city };
+    chatHistory = [];
+    const w = $('welcome');
+    if (w) w.remove();
+    chatArea.querySelectorAll('.msg-enter').forEach(el => el.remove());
+    $('pitch-label').textContent = `Pitch #${data.id} — ${fullName}`;
+    showToast(`Pitch "${fullName}" posicionado`, 'ok');
+    document.querySelectorAll('.qa-btn').forEach(btn => btn.disabled = false);
+    const qa = $('quick-actions');
+    if (qa) qa.classList.remove('hidden');
+  } catch (err) { showToast('Erro ao criar pitch', 'err'); }
+}
+
+// Habilita botão "Posicionar Empresa" somente com empresa + cidade preenchidos
+function validatePitchFields() {
+  const ok = $('company-input').value.trim().length > 0 && $('city-input').value.trim().length > 0;
+  $('start-pitch-btn').disabled = !ok;
+}
+
+async function sendMessage(text) {
+  if (busy) return;
+  busy = true;
+  sendBtn.disabled = true;
+  userInput.value = '';
+  userInput.style.height = 'auto';
+
+  const w = $('welcome');
+  if (w) w.remove();
+  const qa = $('quick-actions');
+  if (qa) qa.classList.add('hidden');
+
+  appendBubble('user', text);
+  chatHistory.push({ role: 'user', content: text });
+
+  const typingEl = appendTyping();
+  scrollBottom();
+
+  try {
+    const body = {
+      message: text,
+      history: chatHistory.slice(0, -1),
+      user_id: String(AUTH.user_id),
+      pitch_id: currentPitchId,
+      company_name: currentCompanyContext ? currentCompanyContext.name : '',
+      company_city: currentCompanyContext ? currentCompanyContext.city : '',
+    };
+    const r = await fetch('/api/v1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    typingEl.remove();
+    appendBubble('assistant', data.response);
+    chatHistory.push({ role: 'assistant', content: data.response });
+  } catch (err) {
+    typingEl.remove();
+    appendBubble('error', 'Erro na conexão com o agente. Verifique se o servidor está rodando.');
+  }
+
+  busy = false;
+  sendBtn.disabled = false;
+  userInput.focus();
+  scrollBottom();
+}
+
+function appendBubble(role, content) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-enter flex ' + (role === 'user' ? 'justify-end' : 'justify-start');
+
+  const col = document.createElement('div');
+  col.className = 'max-w-[85%] sm:max-w-[72%]';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'rounded-2xl px-4 py-3 text-sm leading-relaxed ';
+
+  if (role === 'user') {
+    bubble.className += 'bg-brand-600/90 text-white rounded-br-md';
+  } else if (role === 'error') {
+    bubble.className += 'bg-red-900/40 text-red-300 border border-red-800/50 rounded-bl-md';
+  } else {
+    bubble.className += 'bg-surface-700 text-gray-200 border border-surface-500 rounded-bl-md';
+  }
+  bubble.innerHTML = renderMarkdown(content);
+  col.appendChild(bubble);
+
+  // Action icons for assistant messages
+  if (role === 'assistant') {
+    const actions = document.createElement('div');
+    actions.className = 'flex gap-2 mt-1 ml-1';
+
+    // Copy
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'text-gray-600 hover:text-gray-300 transition-colors';
+    copyBtn.title = 'Copiar';
+    copyBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>';
+    copyBtn.onclick = () => { navigator.clipboard.writeText(content); showToast('Copiado!','ok'); };
+
+    // Like
+    const likeBtn = document.createElement('button');
+    likeBtn.className = 'text-gray-600 hover:text-emerald-400 transition-colors';
+    likeBtn.title = 'Gostei!';
+    likeBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/></svg>';
+    likeBtn.onclick = () => { likeBtn.classList.add('text-emerald-400'); showToast('Gostei!','ok'); };
+
+    // Dislike
+    const dislikeBtn = document.createElement('button');
+    dislikeBtn.className = 'text-gray-600 hover:text-red-400 transition-colors';
+    dislikeBtn.title = 'Não Gostei';
+    dislikeBtn.innerHTML = '<svg class="w-3.5 h-3.5 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/></svg>';
+    dislikeBtn.onclick = () => { dislikeBtn.classList.add('text-red-400'); showToast('Não Gostei','warn'); };
+
+    actions.append(copyBtn, likeBtn, dislikeBtn);
+    col.appendChild(actions);
+  }
+
+  wrap.appendChild(col);
+  chatArea.appendChild(wrap);
+  scrollBottom();
+}
+
+function appendTyping() {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-enter flex justify-start';
+  wrap.innerHTML = '<div class="bg-surface-700 border border-surface-500 rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5 items-center"><span class="typing-dot w-2 h-2 rounded-full bg-brand-400"></span><span class="typing-dot w-2 h-2 rounded-full bg-brand-400"></span><span class="typing-dot w-2 h-2 rounded-full bg-brand-400"></span></div>';
+  chatArea.appendChild(wrap);
+  return wrap;
+}
+
+function scrollBottom() {
+  requestAnimationFrame(() => chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' }));
+}
+
+// ==================== PITCH ====================
+async function loadPitches() {
+  const company = $('pitch-filter-company').value.trim();
+  const likedOnly = $('pitch-filter-liked').checked;
+  let url = `/api/v1/pitches/?user_id=${AUTH.user_id}`;
+  if (company) url += `&company=${encodeURIComponent(company)}`;
+  if (likedOnly) url += `&liked_only=true`;
+
+  const r = await fetch(url);
+  const pitches = await r.json();
+  const container = $('pitch-list');
+  container.innerHTML = '';
+
+  if (!pitches.length) {
+    container.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">Nenhum pitch encontrado.</p>';
+    return;
+  }
+
+  pitches.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'bg-surface-700 border border-surface-600 rounded-xl p-4';
+    let header = `<div class="flex items-center justify-between mb-3">
+      <div><span class="text-sm font-bold text-white">${esc(p.company_name)}</span> <span class="text-[10px] text-gray-500 font-mono ml-2">#${p.id} — ${p.created_at}</span></div>
+      <div class="flex gap-1">
+        <a href="/api/v1/pitches/${p.id}/pdf" target="_blank" class="px-2 py-1 bg-brand-600 hover:bg-brand-500 rounded-lg text-white text-[10px] font-semibold">PDF</a>
+        <button onclick="deletePitch(${p.id},'${esc(p.company_name)}')" class="px-2 py-1 bg-red-900/30 hover:bg-red-900/50 rounded-lg text-red-400 text-[10px] font-semibold">Excluir</button>
+      </div>
+    </div>`;
+
+    let interactions = '';
+    p.interactions.forEach(i => {
+      const isUser = i.role === 'user';
+      const likeIcon = i.liked === true ? '👍' : i.liked === false ? '👎' : '';
+      interactions += `<div class="mb-2 ${isUser ? 'pl-4 border-l-2 border-brand-600/30' : 'pl-4 border-l-2 border-surface-500'}">
+        <div class="flex items-center gap-2 mb-0.5">
+          <span class="text-[10px] font-semibold ${isUser ? 'text-brand-400' : 'text-gray-400'}">${isUser ? 'Vendedor' : 'Assistente'}</span>
+          <span class="text-[9px] text-gray-600">${i.created_at}</span>
+          ${likeIcon ? `<span class="text-xs">${likeIcon}</span>` : ''}
+        </div>
+        <div class="text-xs text-gray-300 leading-relaxed">${renderMarkdown(i.content.substring(0, 500))}${i.content.length > 500 ? '...' : ''}</div>
+        ${i.note ? `<div class="mt-1 text-[10px] text-gray-500 italic">Nota: ${esc(i.note)}</div>` : ''}
+        <div class="flex gap-1 mt-1">
+          <button onclick="toggleLike(${i.id}, true, this)" class="text-[9px] px-1.5 py-0.5 rounded ${i.liked === true ? 'bg-emerald-900/40 text-emerald-300' : 'bg-surface-600 text-gray-500 hover:text-emerald-300'}">Gostei</button>
+          <button onclick="toggleLike(${i.id}, false, this)" class="text-[9px] px-1.5 py-0.5 rounded ${i.liked === false ? 'bg-red-900/40 text-red-300' : 'bg-surface-600 text-gray-500 hover:text-red-300'}">Não Gostei</button>
+          <button onclick="promptNote(${i.id})" class="text-[9px] px-1.5 py-0.5 rounded bg-surface-600 text-gray-500 hover:text-brand-400">Anotar</button>
+        </div>
+      </div>`;
+    });
+
+    card.innerHTML = header + interactions;
+    container.appendChild(card);
+  });
+}
+
+async function toggleLike(interactionId, liked, btn) {
+  await fetch(`/api/v1/pitches/interactions/${interactionId}/like`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ liked }),
+  });
+  loadPitches();
+}
+
+async function promptNote(interactionId) {
+  const note = prompt('Adicione sua anotação:');
+  if (note === null) return;
+  await fetch(`/api/v1/pitches/interactions/${interactionId}/note`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+  loadPitches();
+}
+
+async function deletePitch(pitchId, name) {
+  if (!confirm(`Excluir pitch "${name}" e todas as interações?`)) return;
+  const r = await fetch(`/api/v1/pitches/${pitchId}`, { method: 'DELETE' });
+  if (r.ok) {
+    showToast('Pitch excluído','ok');
+    if (currentPitchId === pitchId) { currentPitchId = null; $('pitch-label').textContent = ''; }
+    loadPitches();
+  } else {
+    const err = await r.json();
+    showToast(err.detail || 'Erro ao excluir','err');
+  }
+}
+
+// ==================== CATÁLOGO (SQL Engine) ====================
+async function loadCatalog() {
+  // Load schema info
+  const sr = await fetch('/api/v1/catalog/schema');
+  const schema = await sr.json();
+
+  if (schema.error || !schema.columns || schema.columns.length === 0) {
+    $('catalog-schema').innerHTML = '<div class="text-[10px] text-gray-600 font-mono bg-surface-800 rounded-lg px-3 py-2">Nenhuma tabela. Importe um CSV para criar o catálogo.</div>';
+    $('catalog-table-wrap').innerHTML = '';
+    $('catalog-count').textContent = '';
+    return;
+  }
+
+  // Show schema card
+  const cols = schema.columns.filter(c => c.name !== 'id').map(c => `<span class="px-1.5 py-0.5 bg-surface-800 rounded text-[9px] font-mono text-brand-300">${c.name}</span>`).join(' ');
+  $('catalog-schema').innerHTML = `<div class="bg-surface-700/50 border border-surface-600 rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
+    <span class="text-[10px] text-gray-400 font-mono">produtos</span>
+    <span class="text-[9px] text-gray-600">|</span>
+    ${cols}
+    <span class="text-[9px] text-gray-600 ml-auto">${schema.row_count} registro(s)</span>
+  </div>`;
+
+  // Load products
+  const pr = await fetch('/api/v1/catalog/products?limit=50');
+  const data = await pr.json();
+  $('catalog-count').textContent = `${data.total} produto(s) total`;
+  renderCatalogTable(data.products);
+}
+
+function renderCatalogTable(products) {
+  if (!products || !products.length) {
+    $('catalog-table-wrap').innerHTML = '<p class="text-sm text-gray-500 text-center py-6">Sem dados.</p>';
+    return;
+  }
+  const keys = Object.keys(products[0]).filter(k => k !== 'id');
+  let table = '<table class="w-full text-xs border-collapse"><thead><tr>';
+  keys.forEach(k => { table += `<th class="text-left px-2 py-1.5 border-b border-surface-600 text-gray-400 font-mono text-[10px]">${esc(k)}</th>`; });
+  table += '</tr></thead><tbody>';
+  products.forEach(p => {
+    table += '<tr class="hover:bg-surface-700/50 transition-colors">';
+    keys.forEach(k => {
+      const val = p[k] || '';
+      table += `<td class="px-2 py-1.5 border-b border-surface-700/50 text-gray-300 max-w-[200px] truncate" title="${esc(val)}">${esc(val)}</td>`;
+    });
+    table += '</tr>';
+  });
+  table += '</tbody></table>';
+  $('catalog-table-wrap').innerHTML = table;
+}
+
+function quickSQL(sql) {
+  $('sql-input').value = sql;
+  runSQL();
+}
+
+async function runSQL() {
+  const sql = $('sql-input').value.trim();
+  if (!sql) return;
+  try {
+    const r = await fetch('/api/v1/catalog/sql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    });
+    const data = await r.json();
+    if (!r.ok) { showToast(data.detail || 'Erro SQL','err'); return; }
+    $('catalog-count').textContent = `${data.count} resultado(s)`;
+    renderCatalogTable(data.results);
+    showToast(`${data.count} resultado(s)`,'ok');
+  } catch (err) { showToast('Erro na query','err'); }
+}
+
+async function importCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  const r = await fetch('/api/v1/catalog/import', { method: 'POST', body: form });
+  const data = await r.json();
+  if (data.error) { showToast(data.error,'err'); return; }
+  showToast(`${data.imported} produto(s) importado(s) — ${data.columns.length} colunas criadas`, 'ok');
+  input.value = '';
+  loadCatalog();
+}
+
+function exportCSV() {
+  window.open('/api/v1/catalog/export', '_blank');
+}
+
+async function clearCatalog() {
+  if (!confirm('Limpar todo o catálogo? A tabela será removida.')) return;
+  await fetch('/api/v1/catalog/', { method: 'DELETE' });
+  showToast('Catálogo limpo', 'ok');
+  loadCatalog();
+}
+
+// ==================== SKILLS ====================
+let editingSkillSlug = null;
+
+async function loadSkills() {
+  const r = await fetch('/api/v1/skills/');
+  const skills = await r.json();
+  const container = $('skills-list');
+  container.innerHTML = '';
+
+  if (!skills.length) {
+    container.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">Nenhum skill cadastrado.</p>';
+    return;
+  }
+
+  skills.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'bg-surface-700 border border-surface-600 rounded-xl p-3 hover:border-brand-500/30 transition-colors';
+    card.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-bold text-white">${esc(s.name)}</span>
+            <span class="text-[9px] text-gray-600 font-mono bg-surface-800 px-1.5 py-0.5 rounded">${esc(s.slug)}</span>
+          </div>
+          <p class="text-[11px] text-gray-400 mt-0.5 truncate">${esc(s.objetivo)}</p>
+          <p class="text-[10px] text-gray-600 mt-0.5 truncate">${esc(s.quando)}</p>
+        </div>
+        <div class="flex gap-1 ml-3 shrink-0">
+          <button onclick="editSkill('${esc(s.slug)}')" class="px-2 py-1 bg-surface-600 hover:bg-surface-500 rounded text-[10px] text-gray-300">Editar</button>
+          <button onclick="deleteSkill('${esc(s.slug)}')" class="px-2 py-1 bg-red-900/30 hover:bg-red-900/50 rounded text-[10px] text-red-400">Excluir</button>
+        </div>
+      </div>`;
+    container.appendChild(card);
+  });
+}
+
+async function editSkill(slug) {
+  const r = await fetch(`/api/v1/skills/${slug}`);
+  if (!r.ok) { showToast('Skill não encontrado','err'); return; }
+  const data = await r.json();
+  editingSkillSlug = slug;
+  $('skill-editor-title').textContent = data.name + ' (' + slug + ')';
+  $('skill-editor-content').value = data.content;
+  $('skill-editor').classList.remove('hidden');
+  $('skill-editor-content').focus();
+}
+
+async function saveEditSkill() {
+  if (!editingSkillSlug) return;
+  const content = $('skill-editor-content').value;
+  const r = await fetch(`/api/v1/skills/${editingSkillSlug}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (r.ok) {
+    showToast('Skill atualizado','ok');
+    $('skill-editor').classList.add('hidden');
+    editingSkillSlug = null;
+    loadSkills();
+  } else {
+    showToast('Erro ao salvar','err');
+  }
+}
+
+function showNewSkillForm() {
+  $('new-skill-form').classList.remove('hidden');
+  $('new-skill-slug').value = '';
+  $('new-skill-content').value = '# Nome do Skill\n\n## Objetivo\nDescreva o objetivo.\n\n## Quando usar\n- Gatilho 1\n- Gatilho 2\n\n## Workflow\n1. Passo 1\n2. Passo 2\n\n## Formato de saída\n```\nTemplate...\n```\n\n## Regras\n- Regra 1\n- Regra 2\n';
+  $('new-skill-slug').focus();
+}
+
+async function saveNewSkill() {
+  const slug = $('new-skill-slug').value.trim();
+  const content = $('new-skill-content').value;
+  if (!slug || !content) { showToast('Preencha slug e conteúdo','warn'); return; }
+  const r = await fetch('/api/v1/skills/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, content }),
+  });
+  if (r.ok) {
+    showToast('Skill criado','ok');
+    $('new-skill-form').classList.add('hidden');
+    loadSkills();
+  } else {
+    const err = await r.json();
+    showToast(err.detail || 'Erro','err');
+  }
+}
+
+async function deleteSkill(slug) {
+  if (!confirm(`Excluir skill "${slug}"?`)) return;
+  const r = await fetch(`/api/v1/skills/${slug}`, { method: 'DELETE' });
+  if (r.ok) {
+    showToast('Skill excluído','ok');
+    loadSkills();
+  } else {
+    showToast('Erro ao excluir','err');
+  }
+}
+
+// ==================== USUÁRIOS ====================
+async function loadUsers() {
+  const r = await fetch('/api/v1/auth/users');
+  const users = await r.json();
+  const container = $('users-list');
+  container.innerHTML = '';
+
+  if (!users.length) {
+    container.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">Nenhum usuário cadastrado.</p>';
+    return;
+  }
+
+  const roleLabel = { root: 'Root', admin: 'Administrador', user: 'Comum' };
+  const roleColor = { root: 'text-red-400', admin: 'text-brand-400', user: 'text-gray-400' };
+
+  users.forEach(u => {
+    const card = document.createElement('div');
+    card.className = 'bg-surface-700 border border-surface-600 rounded-xl p-3 flex items-center gap-3';
+    const initials = (u.display_name || u.username).split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+    card.innerHTML = `
+      <div class="w-9 h-9 rounded-full bg-surface-500 flex items-center justify-center text-xs font-bold text-white shrink-0">${esc(initials)}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold text-white">${esc(u.display_name || u.username)}</span>
+          <span class="text-[9px] font-mono ${roleColor[u.role] || 'text-gray-500'} bg-surface-800 px-1.5 py-0.5 rounded">${roleLabel[u.role] || u.role}</span>
+        </div>
+        <p class="text-[10px] text-gray-500 font-mono truncate">@${esc(u.username)}</p>
+        ${u.profile_description ? `<p class="text-[10px] text-gray-600 truncate mt-0.5">${esc(u.profile_description)}</p>` : ''}
+      </div>
+      <div class="flex gap-1 shrink-0">
+        <button onclick="editUser(${u.id})" class="px-2 py-1 bg-surface-600 hover:bg-surface-500 rounded text-[10px] text-gray-300">Editar</button>
+        <button onclick="deleteUser(${u.id}, '${esc(u.username)}')" class="px-2 py-1 bg-red-900/30 hover:bg-red-900/50 rounded text-[10px] text-red-400">Excluir</button>
+      </div>`;
+    container.appendChild(card);
+  });
+}
+
+function showNewUserForm() {
+  $('new-user-form').classList.remove('hidden');
+  $('nu-username').value = '';
+  $('nu-password').value = '';
+  $('nu-display').value = '';
+  $('nu-role').value = 'user';
+  $('nu-profile').value = '';
+  $('nu-username').focus();
+}
+
+async function saveNewUser() {
+  const username = $('nu-username').value.trim();
+  const password = $('nu-password').value;
+  const display_name = $('nu-display').value.trim();
+  const role = $('nu-role').value;
+  const profile_description = $('nu-profile').value.trim();
+
+  if (!username || !password) { showToast('Preencha usuário e senha','warn'); return; }
+
+  const r = await fetch('/api/v1/auth/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, role, display_name, profile_description }),
+  });
+  if (r.ok) {
+    showToast('Usuário criado','ok');
+    $('new-user-form').classList.add('hidden');
+    loadUsers();
+  } else {
+    const err = await r.json();
+    showToast(err.detail || 'Erro','err');
+  }
+}
+
+async function editUser(userId) {
+  const r = await fetch('/api/v1/auth/users');
+  const users = await r.json();
+  const u = users.find(x => x.id === userId);
+  if (!u) { showToast('Usuário não encontrado','err'); return; }
+
+  $('eu-id').value = u.id;
+  $('eu-username').value = u.username;
+  $('eu-display').value = u.display_name;
+  $('eu-role').value = u.role;
+  $('eu-profile').value = u.profile_description || '';
+  $('eu-password').value = '';
+  $('edit-user-form').classList.remove('hidden');
+  $('eu-display').focus();
+}
+
+async function saveEditUser() {
+  const userId = $('eu-id').value;
+  const body = {
+    display_name: $('eu-display').value.trim(),
+    role: $('eu-role').value,
+    profile_description: $('eu-profile').value.trim(),
+    password: $('eu-password').value,
+  };
+
+  const r = await fetch(`/api/v1/auth/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    showToast('Usuário atualizado','ok');
+    $('edit-user-form').classList.add('hidden');
+    loadUsers();
+  } else {
+    const err = await r.json();
+    showToast(err.detail || 'Erro','err');
+  }
+}
+
+async function deleteUser(userId, username) {
+  if (userId === AUTH.user_id) { showToast('Não é possível excluir a si mesmo','warn'); return; }
+  if (!confirm(`Excluir usuário "${username}"?`)) return;
+  const r = await fetch(`/api/v1/auth/users/${userId}`, { method: 'DELETE' });
+  if (r.ok) {
+    showToast('Usuário excluído','ok');
+    loadUsers();
+  } else {
+    const err = await r.json();
+    showToast(err.detail || 'Erro','err');
+  }
+}
+
+// ==================== UTILS ====================
+function renderMarkdown(text) {
+  // Inline formatting (applied per-line, after escaping)
+  function inlineFmt(s) {
+    return s
+      .replace(/\*\*(.+?)\*\*/g,'<strong class="text-white font-semibold">$1</strong>')
+      .replace(/\*(.+?)\*/g,'<em>$1</em>')
+      .replace(/`(.+?)`/g,'<code class="bg-surface-900 text-brand-300 px-1 py-0.5 rounded text-xs font-mono">$1</code>')
+      .replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2" target="_blank" class="text-brand-400 underline underline-offset-2 hover:text-brand-300">$1</a>')
+      .replace(/(?<!")(?<!=)(https?:\/\/[^\s<\)]+)/g,'<a href="$1" target="_blank" class="text-brand-400 underline underline-offset-2 hover:text-brand-300 break-all">$1</a>')
+      .replace(/\[\[action:\s*(.+?)\]\]/g, (_, txt) => {
+        const clean = txt.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+        const encoded = btoa(unescape(encodeURIComponent(clean)));
+        return `<button onclick="clickAction('${encoded}')" class="inline-block mt-1 mr-1 mb-1 px-3 py-1.5 bg-brand-600/20 border border-brand-500/40 hover:bg-brand-600/40 hover:border-brand-500 rounded-lg text-xs font-semibold text-brand-300 hover:text-white transition-all cursor-pointer">${txt}</button>`;
+      })
+      .replace(/\{action:\s*(.+?)\}/g, (_, txt) => {
+        const clean = txt.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+        const encoded = btoa(unescape(encodeURIComponent(clean)));
+        return `<button onclick="clickAction('${encoded}')" class="inline-block mt-1 mr-1 mb-1 px-3 py-1.5 bg-brand-600/20 border border-brand-500/40 hover:bg-brand-600/40 hover:border-brand-500 rounded-lg text-xs font-semibold text-brand-300 hover:text-white transition-all cursor-pointer">${txt}</button>`;
+      });
+  }
+
+  // Escape HTML first
+  text = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Split into lines and process block-level elements
+  const lines = text.split('\n');
+  const blocks = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trim();
+
+    // Detect table block: lines starting and ending with |
+    if (line.startsWith('|') && line.endsWith('|')) {
+      const tableLines = [];
+      while (i < lines.length) {
+        const tl = lines[i].trim();
+        if (tl.startsWith('|') && tl.endsWith('|')) {
+          // Skip separator rows |---|---|
+          if (/^\|[\s\-:]+(\|[\s\-:]+)+\|$/.test(tl)) { i++; continue; }
+          const cells = tl.slice(1, -1).split('|').map(c => c.trim());
+          tableLines.push(cells);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (tableLines.length >= 2) {
+        // Build HTML table
+        const hdr = tableLines[0];
+        const body = tableLines.slice(1);
+        // Detect if last row is "total"
+        const lastRow = body.length > 0 ? body[body.length - 1] : [];
+        const hasTotal = lastRow.some(c => /total/i.test(c));
+
+        let html = '<div class="my-3 overflow-x-auto rounded-xl border border-surface-600">';
+        html += '<table class="w-full text-xs">';
+        // Header
+        html += '<thead><tr class="bg-brand-600/20 border-b border-brand-500/40">';
+        hdr.forEach((c, ci) => {
+          const align = ci === hdr.length - 1 && hdr.length > 2 ? 'text-right' : 'text-left';
+          html += `<th class="px-3 py-2 ${align} text-brand-300 font-bold uppercase tracking-wide">${inlineFmt(c)}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        // Body rows
+        body.forEach((row, ri) => {
+          const isTotal = hasTotal && ri === body.length - 1;
+          const bg = isTotal ? 'bg-brand-600/15 border-t border-brand-500/40' : (ri % 2 === 0 ? 'bg-surface-800/30' : 'bg-surface-800/10');
+          const weight = isTotal ? 'font-bold text-brand-300' : 'text-gray-300';
+          html += `<tr class="${bg}">`;
+          row.forEach((c, ci) => {
+            const align = ci === row.length - 1 && row.length > 2 ? 'text-right' : 'text-left';
+            html += `<td class="px-3 py-2 ${align} ${weight}">${inlineFmt(c)}</td>`;
+          });
+          html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        blocks.push(html);
+      } else if (tableLines.length === 1) {
+        blocks.push(inlineFmt(lines[i - 1]));
+      }
+      continue;
+    }
+
+    // #### header → product card-style subheading
+    const h4Match = line.match(/^#{4}\s+(.+)$/);
+    if (h4Match) {
+      // Detect tier for color
+      const title = h4Match[1];
+      const tl = title.toLowerCase();
+      let tierColor = 'border-gray-500 bg-surface-700/40';
+      let badgeHtml = '';
+      if (/âncora|ancora|principal/.test(tl)) {
+        tierColor = 'border-l-orange-500 bg-orange-500/5';
+        badgeHtml = '<span class="inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-orange-500 text-white rounded mr-2">Âncora</span>';
+      } else if (/acelerador|complemento/.test(tl)) {
+        tierColor = 'border-l-blue-500 bg-blue-500/5';
+        badgeHtml = '<span class="inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-500 text-white rounded mr-2">Acelerador</span>';
+      } else if (/expans[aã]o|fase\s*2/.test(tl)) {
+        tierColor = 'border-l-green-500 bg-green-500/5';
+        badgeHtml = '<span class="inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-green-500 text-white rounded mr-2">Expansão</span>';
+      }
+
+      // Collect body lines until next header or double blank
+      const cardLines = [];
+      i++;
+      while (i < lines.length) {
+        const cl = lines[i].trim();
+        if (/^#{2,4}\s/.test(cl)) break;
+        cardLines.push(lines[i]);
+        i++;
+      }
+
+      // Parse card body: **Label:** Value → structured rows
+      let cardBody = '';
+      cardLines.forEach(cl => {
+        const stripped = cl.trim();
+        if (!stripped) { cardBody += '<div class="h-1"></div>'; return; }
+        const clean = stripped.replace(/^[-•*]\s+/, '');
+        const m = clean.match(/\*\*(.+?)\*\*[:\s]*(.+)/);
+        if (m) {
+          cardBody += `<div class="flex gap-2 py-0.5"><span class="text-gray-500 font-semibold text-[11px] min-w-[90px] shrink-0">${inlineFmt(m[1].replace(/:$/, ''))}</span><span class="text-gray-300 text-xs">${inlineFmt(m[2])}</span></div>`;
+        } else {
+          cardBody += `<div class="text-gray-300 text-xs py-0.5">${inlineFmt(clean)}</div>`;
+        }
+      });
+
+      blocks.push(`<div class="my-2 border-l-[3px] ${tierColor} rounded-r-lg px-4 py-3">${badgeHtml}<span class="text-sm font-bold text-white">${inlineFmt(title.replace(/^(âncora|acelerador|expans[aã]o|fase\s*2)\s*[—\-:]\s*/i, ''))}</span><div class="mt-2">${cardBody}</div></div>`);
+      continue;
+    }
+
+    // ### header
+    if (/^### (.+)$/.test(line)) {
+      blocks.push(line.replace(/^### (.+)$/,'<h3 class="text-sm font-bold text-brand-400 mt-3 mb-1">$1</h3>'));
+      i++; continue;
+    }
+    // ## header
+    if (/^## (.+)$/.test(line)) {
+      blocks.push(line.replace(/^## (.+)$/,'<h2 class="text-base font-bold text-white mt-3 mb-1">$1</h2>'));
+      i++; continue;
+    }
+    // Bullet
+    if (/^- (.+)$/.test(line)) {
+      blocks.push(line.replace(/^- (.+)$/,'<li class="ml-4 list-disc text-gray-300">$1</li>').replace(/^(<li.+<\/li>)$/, (m) => inlineFmt(m)));
+      i++; continue;
+    }
+    // Numbered list
+    if (/^\d+\.\s+(.+)$/.test(line)) {
+      blocks.push(line.replace(/^\d+\.\s+(.+)$/,'<li class="ml-4 list-decimal text-gray-300">$1</li>').replace(/^(<li.+<\/li>)$/, (m) => inlineFmt(m)));
+      i++; continue;
+    }
+    // Empty line
+    if (line === '') {
+      blocks.push('<br/>');
+      i++; continue;
+    }
+    // Normal text
+    blocks.push(inlineFmt(line));
+    i++;
+  }
+
+  // Join, cleanup multiple <br/>
+  return blocks.join('\n').replace(/(<br\/>){3,}/g,'<br/><br/>');
+}
+
+function clickAction(encoded) {
+  const text = decodeURIComponent(escape(atob(encoded)));
+  if (!busy) sendMessage(text);
+}
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function showToast(msg, type) {
+  const t = $('toast');
+  const bg = type==='ok'?'bg-emerald-900/80 text-emerald-200':type==='err'?'bg-red-900/80 text-red-200':'bg-amber-900/80 text-amber-200';
+  t.innerHTML = `<div class="toast ${bg} px-4 py-2 rounded-xl text-xs font-semibold shadow-lg">${esc(msg)}</div>`;
+  t.classList.remove('hidden');
+  setTimeout(()=>t.classList.add('hidden'), 2500);
+}
+</script>
+</body>
+</html>

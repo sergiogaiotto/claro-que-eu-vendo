@@ -1,0 +1,39 @@
+# ============================================================
+# "Claro que Eu vendo!" v2 - Dependências
+# ============================================================
+
+# --- Framework Web ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.9
+
+# --- LLM & Agentes ---
+langchain>=0.3.0
+langchain-openai>=0.3.0
+langchain-community>=0.3.0
+langgraph>=0.4.0
+
+# --- Ferramentas de Pesquisa ---
+tavily-python>=0.5.0
+httpx>=0.28.0
+markdownify>=1.2.0
+
+# --- Database ---
+sqlalchemy>=2.0.0
+
+# --- Auth ---
+PyJWT>=2.8.0
+
+# --- PDF ---
+reportlab>=4.0.0
+
+# --- Observabilidade ---
+langfuse>=2.0.0
+
+# --- Utilidades ---
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# --- SSE / Streaming ---
+sse-starlette>=2.0.0
