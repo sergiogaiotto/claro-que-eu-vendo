@@ -20,9 +20,7 @@ async def health():
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
-    """Endpoint principal de chat com o agente de vendas."""
     session_id = request.session_id or str(uuid.uuid4())
-
     callbacks = []
     handler = create_langfuse_handler(
         session_id=session_id,
@@ -34,8 +32,6 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
     try:
         history = [{"role": m.role, "content": m.content} for m in request.history]
-
-        # Injeta contexto da empresa na mensagem se disponível
         message = request.message
         if request.company_name or request.company_city:
             ctx_parts = []
@@ -51,12 +47,21 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             callbacks=callbacks,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        # Traduz erros comuns para mensagens legíveis
+        err_str = str(exc)
+        if "api_key" in err_str.lower() or "authentication" in err_str.lower():
+            detail = "Chave de API inválida ou ausente. Verifique OPENAI_API_KEY no arquivo .env"
+        elif "rate limit" in err_str.lower():
+            detail = "Limite de requisições da API atingido. Aguarde alguns segundos."
+        elif "connection" in err_str.lower() or "timeout" in err_str.lower():
+            detail = "Timeout na conexão com a API OpenAI. Verifique sua conexão."
+        else:
+            detail = err_str
+        raise HTTPException(status_code=500, detail=detail)
     finally:
         if handler:
             handler.flush()
 
-    # Salva interações no pitch se pitch_id foi informado
     if request.pitch_id and request.user_id:
         pitch = db.query(Pitch).filter(Pitch.id == request.pitch_id).first()
         if pitch:
