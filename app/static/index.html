@@ -463,15 +463,21 @@ async function sendMessage(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+        const errData = await r.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${r.status}`);
+    }
     const data = await r.json();
     typingEl.remove();
     appendBubble('assistant', data.response);
     chatHistory.push({ role: 'assistant', content: data.response });
-  } catch (err) {
-    typingEl.remove();
-    appendBubble('error', 'Erro na conexão com o agente. Verifique se o servidor está rodando.');
-  }
+    } catch (err) {
+        typingEl.remove();
+        const msg = err.message && err.message !== '[object Object]'
+            ? `Erro: ${err.message}`
+            : 'Falha ao conectar ao agente. Verifique o servidor e os logs.';
+        appendBubble('error', msg);
+    }    
 
   busy = false;
   sendBtn.disabled = false;
