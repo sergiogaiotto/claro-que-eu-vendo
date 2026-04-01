@@ -14,8 +14,22 @@ from app.config import get_settings
 from app.database import init_db
 
 
+def _check_required_keys(cfg) -> None:
+    """Falha com mensagem clara se chaves obrigatórias não estiverem configuradas."""
+    errors = []
+    if not cfg.openai_api_key or cfg.openai_api_key.startswith("sk-your"):
+        errors.append("OPENAI_API_KEY ausente ou com valor placeholder — configure em platform.openai.com")
+    if not cfg.tavily_api_key or cfg.tavily_api_key.startswith("tvly-your"):
+        errors.append("TAVILY_API_KEY ausente ou com valor placeholder — configure em tavily.com")
+    if errors:
+        raise RuntimeError(
+            "Configuração incompleta:\n" + "\n".join(f"  • {e}" for e in errors)
+        )
+
+
 def create_app() -> FastAPI:
     cfg = get_settings()
+    _check_required_keys(cfg)
 
     app = FastAPI(
         title="Claro que Eu vendo!",
@@ -31,10 +45,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Init database
     init_db()
 
-    # Routers
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(pitch_router, prefix="/api/v1")
@@ -54,6 +66,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-
     cfg = get_settings()
     uvicorn.run("main:app", host=cfg.app_host, port=cfg.app_port, reload=True)
