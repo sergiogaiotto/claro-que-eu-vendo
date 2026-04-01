@@ -4,30 +4,6 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from pydantic import field_validator
-
-class Settings(BaseSettings):
-    # ... campos existentes ...
-
-    @field_validator('openai_api_key')
-    @classmethod
-    def validate_openai_key(cls, v: str) -> str:
-        if not v or v.startswith('sk-your'):
-            raise ValueError(
-                "OPENAI_API_KEY não configurada. "
-                "Edite o arquivo .env com sua chave real de platform.openai.com"
-            )
-        return v
-
-    @field_validator('tavily_api_key')
-    @classmethod
-    def validate_tavily_key(cls, v: str) -> str:
-        if not v or v.startswith('tvly-your'):
-            raise ValueError(
-                "TAVILY_API_KEY não configurada. "
-                "Edite o arquivo .env com sua chave real de tavily.com"
-            )
-        return v
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
