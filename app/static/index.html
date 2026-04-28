@@ -108,6 +108,13 @@
 
     <!-- Input bar -->
     <div class="border-t border-surface-600 bg-surface-800/60 backdrop-blur-md p-3">
+      <div id="answer-banner" class="hidden max-w-3xl mx-auto mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-600/10 border border-brand-500/40 text-xs">
+        <span class="text-brand-300 font-semibold shrink-0">Respondendo:</span>
+        <span id="answer-banner-text" class="text-gray-200 truncate flex-1"></span>
+        <button type="button" onclick="cancelAnswerMode()" class="text-gray-400 hover:text-red-400 shrink-0" title="Cancelar">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
       <form id="chat-form" class="max-w-3xl mx-auto flex gap-2">
         <textarea id="user-input" rows="1" placeholder="Descreva a empresa, interlocutor ou situação..." class="flex-1 bg-surface-700 border border-surface-500 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-brand-500 transition-all" style="max-height:100px"></textarea>
         <button type="submit" id="send-btn" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-500 disabled:bg-surface-600 disabled:cursor-not-allowed rounded-xl text-white text-sm font-semibold transition-colors shrink-0">
@@ -374,8 +381,31 @@ chatForm.addEventListener('submit', async e => {
   e.preventDefault();
   const text = userInput.value.trim();
   if (!text || busy) return;
-  await sendMessage(text);
+  let payload = text;
+  if (pendingAnswerPrompt) {
+    payload = `Em resposta a "${pendingAnswerPrompt}": ${text}`;
+    cancelAnswerMode();
+  }
+  await sendMessage(payload);
 });
+
+let pendingAnswerPrompt = null;
+const ANSWER_INPUT_RE = /^(informar|informe|forneça|forneca|preencha|preencher|diga|digite|envie|enviar|coloque|escreva|adicione)\b/i;
+
+function enterAnswerMode(buttonLabel) {
+  pendingAnswerPrompt = buttonLabel;
+  const banner = $('answer-banner');
+  $('answer-banner-text').textContent = buttonLabel;
+  banner.classList.remove('hidden');
+  userInput.placeholder = `Digite aqui: ${buttonLabel}`;
+  userInput.focus();
+}
+
+function cancelAnswerMode() {
+  pendingAnswerPrompt = null;
+  $('answer-banner').classList.add('hidden');
+  userInput.placeholder = 'Descreva a empresa, interlocutor ou situação...';
+}
 
 function fillInput(template) {
   userInput.value = template;
@@ -1139,8 +1169,13 @@ function renderMarkdown(text) {
 }
 
 function clickAction(encoded) {
+  if (busy) return;
   const text = decodeURIComponent(escape(atob(encoded)));
-  if (!busy) sendMessage(text);
+  if (ANSWER_INPUT_RE.test(text.trim())) {
+    enterAnswerMode(text);
+    return;
+  }
+  sendMessage(text);
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
