@@ -458,11 +458,15 @@ async function sendMessage(text) {
       company_name: currentCompanyContext ? currentCompanyContext.name : '',
       company_city: currentCompanyContext ? currentCompanyContext.city : '',
     };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 240000);
     const r = await fetch('/api/v1/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     if (!r.ok) {
         const errData = await r.json().catch(() => ({}));
         throw new Error(errData.detail || `HTTP ${r.status}`);
@@ -473,11 +477,18 @@ async function sendMessage(text) {
     chatHistory.push({ role: 'assistant', content: data.response });
     } catch (err) {
         typingEl.remove();
-        const msg = err.message && err.message !== '[object Object]'
-            ? `Erro: ${err.message}`
-            : 'Falha ao conectar ao agente. Verifique o servidor e os logs.';
+        let msg;
+        if (err.name === 'AbortError') {
+            msg = 'A pesquisa demorou demais (>4 min) e foi cancelada. Tente uma pergunta mais específica.';
+        } else if (err instanceof TypeError) {
+            msg = 'Falha de rede ao falar com o agente. O servidor pode ter caído ou a conexão caiu — verifique os logs do backend.';
+        } else if (err.message && err.message !== '[object Object]') {
+            msg = `Erro: ${err.message}`;
+        } else {
+            msg = 'Falha ao conectar ao agente. Verifique o servidor e os logs.';
+        }
         appendBubble('error', msg);
-    }    
+    }
 
   busy = false;
   sendBtn.disabled = false;

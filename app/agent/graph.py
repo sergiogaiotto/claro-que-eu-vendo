@@ -98,7 +98,7 @@ async def run_agent(
 
     messages.append(HumanMessage(content=message))
 
-    config = {}
+    config: dict[str, Any] = {"recursion_limit": 30}
     if callbacks:
         config["callbacks"] = callbacks
 
