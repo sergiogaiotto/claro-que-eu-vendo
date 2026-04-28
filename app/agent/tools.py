@@ -3,6 +3,8 @@
 Adaptado do framework deep_research para o contexto de vendas B2B.
 """
 
+import asyncio
+
 import httpx
 from langchain_core.tools import tool
 from markdownify import markdownify
@@ -11,6 +13,12 @@ from tavily import TavilyClient
 from app.config import get_settings
 
 _tavily_client: TavilyClient | None = None
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0 Safari/537.36"
+)
 
 
 def _get_tavily() -> TavilyClient:
@@ -21,16 +29,9 @@ def _get_tavily() -> TavilyClient:
     return _tavily_client
 
 
-def _fetch_page(url: str, timeout: float = 10.0) -> str:
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0 Safari/537.36"
-        )
-    }
+async def _fetch_page_async(client: httpx.AsyncClient, url: str) -> str:
     try:
-        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+        resp = await client.get(url, follow_redirects=True)
         resp.raise_for_status()
         return markdownify(resp.text)[:8000]
     except Exception as exc:
@@ -38,7 +39,7 @@ def _fetch_page(url: str, timeout: float = 10.0) -> str:
 
 
 @tool
-def tavily_search(query: str) -> str:
+async def tavily_search(query: str) -> str:
     """Busca informações na web sobre empresas, pessoas ou mercados.
 
     Use para coletar dados sobre empresas-alvo, interlocutores,
@@ -48,15 +49,25 @@ def tavily_search(query: str) -> str:
         query: Consulta de busca — seja específico para melhores resultados.
     """
     client = _get_tavily()
-    results = client.search(query, max_results=3, topic="general")
+    results = await asyncio.to_thread(
+        client.search, query, max_results=3, topic="general"
+    )
 
-    parts: list[str] = []
-    for item in results.get("results", []):
-        url = item["url"]
-        title = item["title"]
-        content = _fetch_page(url)
-        parts.append(f"## {title}\n**URL:** {url}\n\n{content}\n\n---")
+    items = results.get("results", [])
+    if not items:
+        return f"Nenhum resultado encontrado para '{query}'."
 
+    async with httpx.AsyncClient(
+        headers={"User-Agent": _USER_AGENT}, timeout=8.0
+    ) as http:
+        contents = await asyncio.gather(
+            *(_fetch_page_async(http, item["url"]) for item in items)
+        )
+
+    parts = [
+        f"## {item['title']}\n**URL:** {item['url']}\n\n{content}\n\n---"
+        for item, content in zip(items, contents)
+    ]
     return f"Encontrados {len(parts)} resultado(s) para '{query}':\n\n" + "\n".join(parts)
 
 
