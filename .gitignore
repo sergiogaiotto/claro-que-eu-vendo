@@ -1,0 +1,24 @@
+# Segredos e dados locais (VULN-11)
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ferramentas / IDE
+.idea/
+.vscode/
+*.log
+.DS_Store

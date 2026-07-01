@@ -44,7 +44,15 @@ def load_all_skills() -> list[Skill]:
 
 
 def load_skill(slug: str) -> Skill | None:
-    """Carrega um skill específico pelo slug."""
+    """Carrega um skill específico pelo slug (com validação anti-traversal)."""
+    from app.security import is_safe_slug, resolve_within
+
+    if not is_safe_slug(slug):
+        return None
+    try:
+        resolve_within(SKILLS_DIR, slug)
+    except ValueError:
+        return None
     skill_file = os.path.join(SKILLS_DIR, slug, "SKILL.md")
     if not os.path.isfile(skill_file):
         return None

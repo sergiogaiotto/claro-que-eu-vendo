@@ -2,19 +2,26 @@
 
 from io import BytesIO
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.auth import get_current_user, require_admin
 from app.catalog_engine import (
+    _get_conn,
     clear_catalog,
     execute_catalog_sql,
     export_catalog_csv,
     get_catalog_schema,
     import_csv_to_catalog,
 )
+from app.database import User
+from app.ratelimit import rate_limiter
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
+
+# Tamanho máximo de upload de CSV (5 MB) — evita esgotamento de memória.
+_MAX_CSV_BYTES = 5 * 1024 * 1024
 
 
 class SqlQuery(BaseModel):
@@ -30,27 +37,40 @@ class NlQuery(BaseModel):
 # ============================================================
 
 @router.get("/schema")
-def schema():
+def schema(_user: User = Depends(get_current_user)):
     """Retorna schema do catálogo com amostra de dados."""
     info = get_catalog_schema()
     return info
 
 
 @router.get("/products")
-def list_products(limit: int = Query(default=50, le=500), offset: int = Query(default=0)):
-    """Lista produtos com paginação."""
+def list_products(
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _user: User = Depends(get_current_user),
+):
+    """Lista produtos com paginação (parâmetros parametrizados)."""
+    conn = _get_conn()
     try:
-        rows = execute_catalog_sql(f"SELECT * FROM produtos LIMIT {limit} OFFSET {offset}")
-        count_result = execute_catalog_sql("SELECT COUNT(*) as total FROM produtos")
-        total = count_result[0]["total"] if count_result else 0
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM produtos LIMIT ? OFFSET ?", (limit, offset))
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute("SELECT COUNT(*) as total FROM produtos")
+        total = cur.fetchone()["total"]
         return {"products": rows, "total": total, "limit": limit, "offset": offset}
     except Exception:
         return {"products": [], "total": 0, "limit": limit, "offset": offset}
+    finally:
+        conn.close()
 
 
 @router.post("/sql")
-def run_sql(req: SqlQuery):
-    """Executa query SQL SELECT no catálogo."""
+def run_sql(
+    req: SqlQuery,
+    _user: User = Depends(get_current_user),
+    _rl=Depends(rate_limiter("catalog_sql", 60, 60)),
+):
+    """Executa query SQL SELECT (somente leitura) no catálogo."""
     try:
         results = execute_catalog_sql(req.sql)
         return {"results": results, "count": len(results)}
@@ -61,13 +81,21 @@ def run_sql(req: SqlQuery):
 
 
 @router.post("/import")
-async def import_csv(file: UploadFile = File(...)):
-    """Importa CSV — colunas viram campos da tabela SQLite."""
-    if not file.filename.endswith(".csv"):
+async def import_csv(
+    file: UploadFile = File(...),
+    _admin: User = Depends(require_admin),
+):
+    """Importa CSV — colunas viram campos da tabela SQLite (requer admin)."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Arquivo deve ser .csv")
 
     content = await file.read()
-    text = content.decode("utf-8-sig")
+    if len(content) > _MAX_CSV_BYTES:
+        raise HTTPException(413, "Arquivo excede o limite de 5 MB")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "CSV deve estar em UTF-8")
     result = import_csv_to_catalog(text)
 
     if "error" in result:
@@ -77,7 +105,7 @@ async def import_csv(file: UploadFile = File(...)):
 
 
 @router.get("/export")
-def export_csv():
+def export_csv(_user: User = Depends(get_current_user)):
     """Exporta catálogo como CSV."""
     csv_content = export_catalog_csv()
     if not csv_content:
@@ -92,7 +120,7 @@ def export_csv():
 
 
 @router.delete("/")
-def clear():
-    """Limpa o catálogo (drop table)."""
+def clear(_admin: User = Depends(require_admin)):
+    """Limpa o catálogo (drop table) — requer admin."""
     clear_catalog()
     return {"deleted": True}

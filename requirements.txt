@@ -1,39 +1,43 @@
 # ============================================================
 # "Claro que Eu vendo!" v2 - Dependências
+# Faixas com limite superior para conter supply-chain risk (VULN-12).
+# Para reprodutibilidade total gere um lock: pip freeze > requirements.lock
 # ============================================================
 
 # --- Framework Web ---
-fastapi>=0.115.0
-uvicorn[standard]>=0.34.0
-python-multipart>=0.0.9
+fastapi>=0.115.0,<0.140.0
+uvicorn[standard]>=0.34.0,<0.50.0
+python-multipart>=0.0.9,<0.1.0
 
 # --- LLM & Agentes ---
-langchain>=0.3.0
-langchain-openai>=0.3.0
-langchain-community>=0.3.0
-langgraph>=0.4.0
+langchain>=0.3.0,<2.0.0
+langchain-core>=0.3.0,<2.0.0
+langchain-openai>=0.3.0,<2.0.0
+langchain-community>=0.3.0,<2.0.0
+langgraph>=0.4.0,<2.0.0
 
 # --- Ferramentas de Pesquisa ---
-tavily-python>=0.5.0
-httpx>=0.28.0
-markdownify>=1.2.0
+tavily-python>=0.5.0,<1.0.0
+httpx>=0.28.0,<0.30.0
+markdownify>=1.2.0,<2.0.0
 
 # --- Database ---
-sqlalchemy>=2.0.0
+sqlalchemy>=2.0.0,<3.0.0
 
 # --- Auth ---
-PyJWT>=2.8.0
+# >=2.8.0: importa a `cryptography` de forma preguiçosa (HS256 não a exige).
+PyJWT>=2.8.0,<3.0.0
 
 # --- PDF ---
-reportlab>=4.0.0
+reportlab>=4.0.0,<6.0.0
 
 # --- Observabilidade ---
-langfuse>=2.0.0
+langfuse>=2.0.0,<4.0.0
 
 # --- Utilidades ---
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-python-dotenv>=1.0.0
+pydantic>=2.0.0,<3.0.0
+pydantic-settings>=2.0.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
 
 # --- SSE / Streaming ---
-sse-starlette>=2.0.0
+sse-starlette>=2.0.0,<4.0.0

@@ -10,9 +10,31 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database import Pitch, PitchInteraction, get_db
+from app.api.auth import get_current_user
+from app.database import Pitch, PitchInteraction, User, get_db
 
 router = APIRouter(prefix="/pitches", tags=["pitches"])
+
+
+def _owned_pitch(db: Session, pitch_id: int, user: User) -> Pitch:
+    """Retorna o pitch se pertencer ao usuário; 404 caso contrário (VULN-06)."""
+    pitch = db.query(Pitch).filter(Pitch.id == pitch_id, Pitch.user_id == user.id).first()
+    if not pitch:
+        raise HTTPException(404, "Pitch não encontrado")
+    return pitch
+
+
+def _owned_interaction(db: Session, interaction_id: int, user: User) -> PitchInteraction:
+    """Retorna a interação se o pitch pertencer ao usuário; 404 caso contrário."""
+    i = (
+        db.query(PitchInteraction)
+        .join(Pitch, PitchInteraction.pitch_id == Pitch.id)
+        .filter(PitchInteraction.id == interaction_id, Pitch.user_id == user.id)
+        .first()
+    )
+    if not i:
+        raise HTTPException(404, "Interação não encontrada")
+    return i
 
 
 # ---------- schemas ----------
@@ -76,12 +98,12 @@ def _pitch_to_out(p: Pitch) -> PitchOut:
 
 @router.get("/", response_model=list[PitchOut])
 def list_pitches(
-    user_id: int = Query(...),
     company: str = Query(default=""),
     liked_only: bool = Query(default=False),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    q = db.query(Pitch).filter(Pitch.user_id == user_id)
+    q = db.query(Pitch).filter(Pitch.user_id == user.id)
     if company:
         q = q.filter(Pitch.company_name.ilike(f"%{company}%"))
     pitches = q.order_by(Pitch.created_at.desc()).all()
@@ -98,8 +120,12 @@ def list_pitches(
 
 
 @router.post("/", response_model=PitchOut)
-def create_pitch(req: PitchCreate, user_id: int = Query(...), db: Session = Depends(get_db)):
-    pitch = Pitch(user_id=user_id, company_name=req.company_name)
+def create_pitch(
+    req: PitchCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    pitch = Pitch(user_id=user.id, company_name=req.company_name)
     db.add(pitch)
     db.commit()
     db.refresh(pitch)
@@ -107,10 +133,12 @@ def create_pitch(req: PitchCreate, user_id: int = Query(...), db: Session = Depe
 
 
 @router.post("/interactions", response_model=InteractionOut)
-def add_interaction(req: SaveInteraction, db: Session = Depends(get_db)):
-    pitch = db.query(Pitch).filter(Pitch.id == req.pitch_id).first()
-    if not pitch:
-        raise HTTPException(404, "Pitch não encontrado")
+def add_interaction(
+    req: SaveInteraction,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _owned_pitch(db, req.pitch_id, user)
     interaction = PitchInteraction(
         pitch_id=req.pitch_id, role=req.role, content=req.content,
     )
@@ -125,10 +153,13 @@ def add_interaction(req: SaveInteraction, db: Session = Depends(get_db)):
 
 
 @router.patch("/interactions/{interaction_id}/like", response_model=InteractionOut)
-def update_like(interaction_id: int, req: UpdateLike, db: Session = Depends(get_db)):
-    i = db.query(PitchInteraction).filter(PitchInteraction.id == interaction_id).first()
-    if not i:
-        raise HTTPException(404, "Interação não encontrada")
+def update_like(
+    interaction_id: int,
+    req: UpdateLike,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    i = _owned_interaction(db, interaction_id, user)
     i.liked = req.liked
     db.commit()
     db.refresh(i)
@@ -139,10 +170,13 @@ def update_like(interaction_id: int, req: UpdateLike, db: Session = Depends(get_
 
 
 @router.patch("/interactions/{interaction_id}/note", response_model=InteractionOut)
-def update_note(interaction_id: int, req: UpdateNote, db: Session = Depends(get_db)):
-    i = db.query(PitchInteraction).filter(PitchInteraction.id == interaction_id).first()
-    if not i:
-        raise HTTPException(404, "Interação não encontrada")
+def update_note(
+    interaction_id: int,
+    req: UpdateNote,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    i = _owned_interaction(db, interaction_id, user)
     i.note = req.note
     db.commit()
     db.refresh(i)
@@ -153,22 +187,26 @@ def update_note(interaction_id: int, req: UpdateNote, db: Session = Depends(get_
 
 
 @router.delete("/{pitch_id}")
-def delete_pitch(pitch_id: int, db: Session = Depends(get_db)):
+def delete_pitch(
+    pitch_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Exclui um pitch e todas as suas interações."""
-    pitch = db.query(Pitch).filter(Pitch.id == pitch_id).first()
-    if not pitch:
-        raise HTTPException(404, "Pitch não encontrado")
+    pitch = _owned_pitch(db, pitch_id, user)
     db.delete(pitch)
     db.commit()
     return {"deleted": pitch_id}
 
 
 @router.get("/{pitch_id}/pdf")
-def generate_pdf(pitch_id: int, db: Session = Depends(get_db)):
+def generate_pdf(
+    pitch_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Gera PDF Guia de Bolso do Vendedor — compilado estruturado do pitch."""
-    pitch = db.query(Pitch).filter(Pitch.id == pitch_id).first()
-    if not pitch:
-        raise HTTPException(404, "Pitch não encontrado")
+    pitch = _owned_pitch(db, pitch_id, user)
 
     try:
         from reportlab.lib.pagesizes import A4
