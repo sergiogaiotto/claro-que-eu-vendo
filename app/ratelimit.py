@@ -15,6 +15,15 @@ from fastapi import HTTPException, Request
 
 _lock = threading.Lock()
 _hits: dict[str, deque[float]] = defaultdict(deque)
+_ops = 0
+_SWEEP_EVERY = 500  # varre chaves ociosas periodicamente (evita leak de memória)
+
+
+def _sweep(now: float, window: int) -> None:
+    """Remove chaves cuja janela expirou por completo (chamada sob _lock)."""
+    stale = [k for k, dq in _hits.items() if not dq or dq[-1] < now - window]
+    for k in stale:
+        del _hits[k]
 
 
 def _client_ip(request: Request) -> str:
@@ -26,8 +35,12 @@ def _client_ip(request: Request) -> str:
 
 
 def _check(key: str, limit: int, window: int) -> None:
+    global _ops
     now = time.monotonic()
     with _lock:
+        _ops += 1
+        if _ops % _SWEEP_EVERY == 0:
+            _sweep(now, window)
         dq = _hits[key]
         cutoff = now - window
         while dq and dq[0] < cutoff:

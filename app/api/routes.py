@@ -29,14 +29,16 @@ async def chat(
     http_request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    _rl=Depends(rate_limiter("chat", 20, 60)),
+    _rl=Depends(rate_limiter("chat", get_settings().rate_limit_chat, get_settings().rate_limit_window_seconds)),
 ):
     cfg = get_settings()
     ip = http_request.client.host if http_request.client else None
 
     # Guardrail de entrada — bloqueia prompt injection (VULN-04 / LLM01).
+    # Inclui o histórico enviado pelo cliente (role user), que também vai ao LLM.
+    history_user_msgs = [m.content for m in request.history if m.role == "user"]
     try:
-        check_user_input(request.message, request.company_name, request.company_city)
+        check_user_input(request.message, request.company_name, request.company_city, *history_user_msgs)
     except PromptInjectionError as exc:
         audit_log("chat_blocked", user_id=user.id, message=request.message, ip=ip)
         raise HTTPException(status_code=400, detail=str(exc))

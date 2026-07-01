@@ -69,9 +69,20 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_env: str = "development"
 
+    # Valor de fábrica do segredo JWT — se permanecer, tokens são forjáveis.
+    _DEFAULT_JWT_SECRET = "change-me-in-production-claro-que-eu-vendo-2025"
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def jwt_secret_is_weak(self) -> bool:
+        return (not self.jwt_secret) or self.jwt_secret == self._DEFAULT_JWT_SECRET or len(self.jwt_secret) < 16
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
 
 
 @lru_cache

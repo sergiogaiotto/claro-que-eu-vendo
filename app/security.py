@@ -16,23 +16,30 @@ import re
 # ============================================================
 
 # Padrões que indicam tentativa de sobrescrever instruções do sistema.
+# Nota: um blocklist é inerentemente incompleto (a defesa principal é
+# estrutural — wrap_untrusted — e o reforço no system prompt). Aqui buscamos
+# elevar o custo de bypass cobrindo variações comuns em pt/en.
 _INJECTION_PATTERNS = [
-    r"ignore\s+(all\s+|as\s+|todas?\s+as\s+)?(previous|prior|above|anterior)",
+    r"ignore\s+(all\s+|any\s+|as\s+|todas?\s+as\s+)?(previous|prior|above|earlier|anterior|acima)",
     r"ignore\s+(as\s+)?instru(ç|c)(õ|o)es",
-    r"disregard\s+(all\s+|the\s+)?(previous|prior|above)",
-    r"esque(ç|c)a\s+(as\s+)?instru(ç|c)(õ|o)es",
+    r"disregard\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier|instructions?)",
+    r"esque(ç|c)a\s+(as\s+|tudo|todas)",
+    r"desconsidere?\s+(as\s+|tudo|o\s+que)",
     r"system\s*[:\-]?\s*prompt",
     r"system\s+prompt",
     r"prompt\s+do\s+sistema",
-    r"reveal\s+(your|the)\s+(system\s+)?prompt",
+    r"(reveal|show|print|repeat|expose|export|mostre|revele|imprima)\b.{0,30}\bprompt",
     r"exporte?\s+o\s+system\s+prompt",
-    r"you\s+are\s+now\s+(an?\s+)?(unrestricted|different|dan|jailbroken)",
-    r"voc(ê|e)\s+agora\s+(é|e)\s+(um|uma)\s+assistente\s+sem\s+restri",
-    r"act\s+as\s+(an?\s+)?(unrestricted|dan|jailbroken)",
-    r"sem\s+restri(ç|c)(õ|o)es",
+    r"you\s+are\s+now\s+(an?\s+)?(unrestricted|different|dan|jailbroken|free)",
+    r"voc(ê|e)\s+agora\s+(é|e|sera|será)\s+(um|uma)?\s*(assistente\s+)?sem\s+restri",
+    r"act\s+as\s+(an?\s+)?(unrestricted|dan|jailbroken|evil)",
+    r"from\s+now\s+on\b.{0,40}(no\s+rules|ignore|you\s+are|no\s+restrictions)",
+    r"(you\s+have\s+)?no\s+(rules|restrictions|limits|guardrails)",
+    r"sem\s+(nenhuma\s+)?restri(ç|c)(õ|o)es",
+    r"(a\s+partir\s+de\s+agora|de\s+agora\s+em\s+diante)\b.{0,40}(sem|ignore|nenhuma\s+regra)",
     r"developer\s+mode",
     r"</?\s*(system|assistant|/?instructions?)\s*>",
-    r"\[\s*/?\s*system\s*\]",
+    r"\[\s*/?\s*(system|inst)\s*\]",
     r"###\s*system",
     r"drop\s+table",
     r"sqlite_master",
@@ -40,6 +47,9 @@ _INJECTION_PATTERNS = [
 ]
 
 _INJECTION_RE = re.compile("|".join(f"(?:{p})" for p in _INJECTION_PATTERNS), re.IGNORECASE)
+
+# Normaliza leetspeak/homoglifos simples para dificultar bypass (ign0re, syst3m…).
+_LEET_MAP = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
 
 # Limite defensivo de tamanho de entrada (evita floods/DoS de contexto).
 MAX_INPUT_CHARS = 8000
@@ -53,7 +63,8 @@ def detect_prompt_injection(text: str) -> bool:
     """Retorna True se o texto contém um padrão suspeito de prompt injection."""
     if not text:
         return False
-    return bool(_INJECTION_RE.search(text))
+    normalized = text.translate(_LEET_MAP)
+    return bool(_INJECTION_RE.search(text) or _INJECTION_RE.search(normalized))
 
 
 def check_user_input(*parts: str) -> None:
@@ -93,13 +104,18 @@ def wrap_untrusted(label: str, content: str) -> str:
 # PII masking na saída (AUS-02 / LLM02)
 # ============================================================
 
-# CPF: 000.000.000-00 ou 00000000000 (11 dígitos)
-_CPF_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b")
+# CPF: 000.000.000-00 (formato pontuado — evita mascarar sequências genéricas de 11 dígitos)
+_CPF_RE = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b")
 # E-mail
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
-# Telefone BR: (11) 91234-5678 / 11912345678 / +55 11 91234 5678
+# Telefone BR — exige sinal telefônico real (DDD entre parênteses, +55 ou
+# celular de 11 dígitos / 9XXXX-XXXX). Evita mascarar códigos de pedido,
+# valores e sequências como "1234-5678"/"4000-8000" (regressão AUS-02).
 _PHONE_RE = re.compile(
-    r"(?<!\d)(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?9?\d{4}[-\s]?\d{4}(?!\d)"
+    r"(?:\+?55\s?)?\(\d{2}\)\s?9?\d{4}[-\s]?\d{4}"   # (11) 91234-5678
+    r"|\+55\s?\d{2}\s?9?\d{4}[-\s]?\d{4}"            # +55 11 91234-5678
+    r"|\b\d{2}9\d{4}[-\s]?\d{4}\b"                    # 11912345678
+    r"|\b9\d{4}[-\s]\d{4}\b"                          # 91234-5678
 )
 
 

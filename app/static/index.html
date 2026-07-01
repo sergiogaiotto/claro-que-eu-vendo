@@ -735,7 +735,7 @@ async function loadCatalog() {
   }
 
   // Show schema card
-  const cols = schema.columns.filter(c => c.name !== 'id').map(c => `<span class="px-1.5 py-0.5 bg-surface-800 rounded text-[9px] font-mono text-brand-300">${c.name}</span>`).join(' ');
+  const cols = schema.columns.filter(c => c.name !== 'id').map(c => `<span class="px-1.5 py-0.5 bg-surface-800 rounded text-[9px] font-mono text-brand-300">${esc(c.name)}</span>`).join(' ');
   $('catalog-schema').innerHTML = `<div class="bg-surface-700/50 border border-surface-600 rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
     <span class="text-[10px] text-gray-400 font-mono">produtos</span>
     <span class="text-[9px] text-gray-600">|</span>

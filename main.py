@@ -33,6 +33,17 @@ def _check_required_keys(cfg) -> None:
     for w in warnings:
         logger.warning(w)
 
+    # JWT_SECRET fraco/padrão permite forjar tokens de sessão (root). Em
+    # produção isso é fatal; em dev, alerta ruidoso.
+    if cfg.jwt_secret_is_weak:
+        msg = (
+            "JWT_SECRET ausente/padrão/curto — tokens de sessão são forjáveis. "
+            "Gere um segredo forte: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
+        if cfg.is_production:
+            raise RuntimeError(f"Configuração insegura em produção: {msg}")
+        logger.warning(msg)
+
 
 def create_app() -> FastAPI:
     cfg = get_settings()
