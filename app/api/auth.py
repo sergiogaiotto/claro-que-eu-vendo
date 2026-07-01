@@ -109,7 +109,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Sessão inválida")
 
-    user = db.query(User).filter(User.id == int(payload["sub"])).first()
+    sub = payload.get("sub")
+    if sub is None:
+        raise HTTPException(status_code=401, detail="Sessão inválida")
+    try:
+        user_id = int(sub)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Sessão inválida")
+
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Usuário não encontrado")
     return user
@@ -120,6 +128,18 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("root", "admin"):
         raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
     return user
+
+
+def _guard_role_assignment(actor: User, target_role: str) -> None:
+    """Impede escalonamento admin→root: apenas root cria/atribui o papel root."""
+    if target_role == "root" and actor.role != "root":
+        raise HTTPException(status_code=403, detail="Apenas root pode conceder o papel root")
+
+
+def _guard_target_privilege(actor: User, target: User) -> None:
+    """Impede que um admin modifique/exclua um usuário root."""
+    if target.role == "root" and actor.role != "root":
+        raise HTTPException(status_code=403, detail="Apenas root pode gerenciar usuários root")
 
 
 # ---------- bootstrap de root (VULN-03) ----------
@@ -211,7 +231,7 @@ def setup(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
-    _rl=Depends(rate_limiter("login", 10, 60)),
+    _rl=Depends(rate_limiter("login", get_settings().rate_limit_login, get_settings().rate_limit_window_seconds)),
 ):
     """Cria o primeiro usuário root — apenas quando não há usuários E o
     setup_token confere (VULN-03). Sem SETUP_TOKEN configurado, fica desativado.
@@ -247,7 +267,7 @@ def login(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
-    _rl=Depends(rate_limiter("login", 10, 60)),
+    _rl=Depends(rate_limiter("login", get_settings().rate_limit_login, get_settings().rate_limit_window_seconds)),
 ):
     """Login — autentica e emite o JWT em cookie HttpOnly.
 
@@ -291,6 +311,7 @@ def create_user(
     """Cria novo usuário (requer admin/root)."""
     if req.role not in _VALID_ROLES:
         raise HTTPException(status_code=400, detail="Papel inválido")
+    _guard_role_assignment(_admin, req.role)
     existing = db.query(User).filter(User.username == req.username).first()
     if existing:
         raise HTTPException(status_code=409, detail="Usuário já existe")
@@ -346,11 +367,15 @@ def update_user(
     if not user:
         raise HTTPException(404, "Usuário não encontrado")
 
+    # Um admin não pode modificar um root nem promover ninguém a root.
+    _guard_target_privilege(_admin, user)
+
     if req.display_name:
         user.display_name = req.display_name
     if req.role:
         if req.role not in _VALID_ROLES:
             raise HTTPException(status_code=400, detail="Papel inválido")
+        _guard_role_assignment(_admin, req.role)
         user.role = req.role
     if req.profile_description is not None:
         user.profile_description = req.profile_description
@@ -382,6 +407,9 @@ def delete_user(
 
     if user.id == _admin.id:
         raise HTTPException(400, "Não é possível excluir a si mesmo")
+
+    # Um admin não pode excluir um usuário root.
+    _guard_target_privilege(_admin, user)
 
     if user.role == "root":
         root_count = db.query(User).filter(User.role == "root").count()
