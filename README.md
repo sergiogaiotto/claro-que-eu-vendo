@@ -2,6 +2,8 @@
 
 Assistente de inteligência de vendas B2B para PMEs. Pesquisa empresas, analisa interlocutores, monta briefings, recomenda produtos do catálogo via NBO (Next Best Offer), gera pitches estruturados, exporta guias em PDF e oferece **Botão de Pânico** para suporte ao vivo durante a negociação.
 
+> **Estado de segurança:** a aplicação passou por uma auditoria AppSec (OWASP LLM Top 10 2025 · OWASP ASVS · CWE · LGPD) com 22 achados e **todos foram remediados** — veja a seção [Segurança da Informação](#segurança-da-informação-si--cybersec). O playbook reutilizável que consolida essa metodologia está em [`.claude/skills/seguranca-appsec/SKILL.md`](.claude/skills/seguranca-appsec/SKILL.md).
+
 ---
 
 ## Sumário
@@ -12,12 +14,13 @@ Assistente de inteligência de vendas B2B para PMEs. Pesquisa empresas, analisa 
 - [Estrutura de diretórios](#estrutura-de-diretórios)
 - [Quickstart](#quickstart)
 - [Configuração — variáveis de ambiente](#configuração--variáveis-de-ambiente)
+- [Provisionamento do primeiro usuário (bootstrap)](#provisionamento-do-primeiro-usuário-bootstrap)
 - [API REST — referência completa](#api-rest--referência-completa)
 - [Modelo de dados](#modelo-de-dados)
 - [Skills (SKILL.md) — como o agente raciocina](#skills-skillmd--como-o-agente-raciocina)
 - [Catálogo Text-to-SQL + motor NBO](#catálogo-text-to-sql--motor-nbo)
 - [Geração de PDF — Guia de Bolso do Vendedor](#geração-de-pdf--guia-de-bolso-do-vendedor)
-- [Observabilidade](#observabilidade)
+- [Observabilidade e auditoria](#observabilidade-e-auditoria)
 - [Segurança da Informação (SI / Cybersec)](#segurança-da-informação-si--cybersec)
 - [Operação e deploy](#operação-e-deploy)
 - [Base conceitual](#base-conceitual)
@@ -37,8 +40,8 @@ O sistema apoia o vendedor em **três momentos** do ciclo comercial:
 
 ### Fluxo do vendedor
 
-1. **Login** (cria root automaticamente no primeiro acesso).
-2. **Cria um Pitch** — vincula a empresa-alvo a uma sessão persistente.
+1. **Login** com credenciais (o primeiro usuário root é provisionado pelo operador — ver [bootstrap](#provisionamento-do-primeiro-usuário-bootstrap)). A sessão vive em um **cookie HttpOnly**.
+2. **Cria um Pitch** — vincula a empresa-alvo a uma sessão persistente, isolada por usuário.
 3. **Conversa com o agente** via chat — o agente identifica o skill correto, pesquisa na web, consulta o catálogo, e devolve a resposta formatada.
 4. **Marca trechos com 👍** (Liked) e adiciona **anotações** em qualquer interação.
 5. **Exporta o Guia de Bolso em PDF** — capa, índice, seções classificadas (Empresa, Interlocutor, Dores, Abordagem, Pitch, Produtos com cards NBO coloridos por tier), destaques, anotações e checklist pré-reunião.
@@ -46,7 +49,7 @@ O sistema apoia o vendedor em **três momentos** do ciclo comercial:
 
 ### Botões clicáveis ([[action: ...]])
 
-O agente embute marcadores `[[action: texto]]` na resposta. O frontend converte em **botões clicáveis** que enviam o texto de volta como nova mensagem — usado para desambiguação (escolher entre múltiplas empresas/contatos), navegação ("Montar pitch", "Analisar interlocutor") e urgências durante a negociação.
+O agente embute marcadores `[[action: texto]]` na resposta. O frontend converte em **botões clicáveis** que enviam o texto de volta como nova mensagem — usado para desambiguação (escolher entre múltiplas empresas/contatos), navegação ("Montar pitch", "Analisar interlocutor") e urgências durante a negociação. Os botões são renderizados com `data-action` + delegação de evento (sem `onclick` inline) e o HTML passa por sanitização — ver [XSS](#-saída-e-xss-vuln-07).
 
 ### Desambiguação obrigatória
 
@@ -60,12 +63,15 @@ Regra inviolável do prompt do orquestrador: **toda busca que retornar mais de u
 ┌─────────────────────────────────────────────────────────────┐
 │  Frontend (Vanilla JS + Tailwind, single-file index.html)   │
 │  Tabs: Chat · Pitches · Catálogo · Skills · Usuários        │
+│  Auth: cookie HttpOnly · DOMPurify · sanitização de URL      │
 └──────────────────┬──────────────────────────────────────────┘
-                   │  REST + JWT
+                   │  REST + cookie de sessão (same-origin)
 ┌──────────────────▼──────────────────────────────────────────┐
 │  FastAPI (main.py)                                          │
 │  Routers: /auth · /chat · /pitches · /catalog · /skills     │
-│  Middleware: CORS · Pydantic validation                     │
+│  Middleware: CORS (allowlist) · Security Headers (CSP/HSTS)  │
+│  Por rota: Auth (get_current_user) · Rate limit · Pydantic  │
+│  Módulos SI: security · audit · ratelimit · middleware       │
 └──────────────────┬──────────────────────────────────────────┘
                    │
        ┌───────────┼───────────┬──────────────┐
@@ -74,23 +80,23 @@ Regra inviolável do prompt do orquestrador: **toda busca que retornar mais de u
 │ LangGraph  │ │ SQLite  │ │ SQLite     │ │ ReportLab      │
 │ ReAct      │ │ app.db  │ │ catalog.db │ │ PDF builder    │
 │ Agent      │ │ (users, │ │ (Text-to-  │ │ (Guia de       │
-│ + 6 tools  │ │ pitches)│ │  SQL)      │ │  Bolso)        │
+│ + 6 tools  │ │ pitches)│ │  SQL RO)   │ │  Bolso)        │
 └──────┬─────┘ └─────────┘ └────────────┘ └────────────────┘
        │
-       ├── tavily_search (web search)
+       ├── tavily_search (web search — conteúdo tratado como não confiável)
        ├── think_tool (reflexão estratégica)
        ├── catalog_list_tables / get_schema / query / nbo_analyze
        │
        ▼
 ┌──────────────────────────┐    ┌──────────────────────────┐
 │ OpenAI (gpt-4o-mini)     │    │ LangFuse (opcional)      │
-│ via langchain-openai     │    │ traces, sessions, costs  │
+│ max_tokens + timeout     │    │ traces, sessions, costs  │
 └──────────────────────────┘    └──────────────────────────┘
 ```
 
 ### Padrão ReAct via LangGraph
 
-O agente usa o padrão **Reasoning + Acting** implementado como grafo de estados em [graph.py](app/agent/graph.py):
+O agente usa o padrão **Reasoning + Acting** implementado como grafo de estados em [`app/agent/graph.py`](app/agent/graph.py):
 
 ```
 START → agent_node ─┐
@@ -101,9 +107,12 @@ START → agent_node ─┐
                                          └──► loop de volta a agent_node
 ```
 
-- O `system_prompt` é montado dinamicamente: data atual + bloco `<Skills disponíveis>` (todos os SKILL.md concatenados) injetado em cada turn.
-- `recursion_limit=30` no LangGraph evita loops infinitos.
-- Streaming habilitado no `ChatOpenAI` (preparado para SSE futuro).
+Características (com foco em latência e custo previsíveis):
+
+- O nó do agente é **assíncrono** (`await llm.ainvoke`), o grafo e o LLM base ficam em cache (`lru_cache`), e o `system_prompt` (data + bloco `<Skills disponíveis>`) é montado **uma vez por requisição** — não a cada iteração do ReAct.
+- **Timeout wall-clock** de `AGENT_TIMEOUT_SECONDS` (default 90s) em torno do agente inteiro via `asyncio.wait_for` → em vez de pendurar, retorna uma mensagem amigável.
+- `ChatOpenAI` com **`max_tokens`** e **`request_timeout`** por chamada; **`AGENT_RECURSION_LIMIT`** (default 12) limita os ciclos ReAct; o histórico é truncado a `HISTORY_MAX_MESSAGES`.
+- A ferramenta de busca faz o parsing HTML→markdown (`markdownify`, CPU-bound) **fora do event loop** (em thread) e limita conteúdo/resultados — isso eliminou o *timeout recorrente da primeira consulta pesada*.
 
 ---
 
@@ -114,15 +123,17 @@ START → agent_node ─┐
 - [FastAPI](https://fastapi.tiangolo.com/) ≥0.115 + [uvicorn](https://www.uvicorn.org/)
 - [LangChain](https://www.langchain.com/) ≥0.3 + [LangGraph](https://langchain-ai.github.io/langgraph/) ≥0.4
 - [SQLAlchemy](https://www.sqlalchemy.org/) 2.0 (ORM) + SQLite
-- [PyJWT](https://pyjwt.readthedocs.io/) (auth)
+- [PyJWT](https://pyjwt.readthedocs.io/) (assinatura da sessão) — hashing de senha com **PBKDF2-HMAC-SHA256** (stdlib, salgado)
 - [Pydantic](https://docs.pydantic.dev/) v2 + pydantic-settings (config & validação)
 - [ReportLab](https://www.reportlab.com/) (PDF)
 - [Tavily](https://www.tavily.com/) (web search) + [markdownify](https://github.com/matthewwithanm/python-markdownify) + httpx
 - [LangFuse](https://langfuse.com/) (observabilidade — opcional)
 
-**Frontend:** HTML único com Tailwind via CDN + JS vanilla. Zero build step.
+**Frontend:** HTML único com Tailwind via CDN + JS vanilla + [DOMPurify](https://github.com/cure53/DOMPurify) (sanitização). Zero build step.
 
 **Modelos:** `gpt-4o-mini` (default, configurável via `OPENAI_MODEL`).
+
+Dependências pinadas com **limite superior** em [`requirements.txt`](requirements.txt) (mitiga supply-chain risk).
 
 ---
 
@@ -130,32 +141,40 @@ START → agent_node ─┐
 
 ```
 claro-que-eu-vendo/
-├── main.py                          # FastAPI entry point + bootstrap
-├── Dockerfile                       # Imagem Python 3.11-slim
-├── requirements.txt
-├── .env                             # Chaves (não commitar em prod)
-├── data/
+├── main.py                          # FastAPI entry point + middlewares + bootstrap
+├── Dockerfile                       # Imagem endurecida (non-root, healthcheck)
+├── .dockerignore                    # Exclui .env, data/, .git da imagem
+├── .gitignore                       # Ignora .env, *.db, __pycache__…
+├── requirements.txt                 # Deps pinadas com upper bound
+├── .env.example                     # Modelo de configuração (copie para .env)
+├── data/                            # (ignorado no git) bancos SQLite em runtime
 │   ├── app.db                       # users, pitches, pitch_interactions
 │   └── catalog.db                   # produtos (schema dinâmico via CSV)
+├── .claude/skills/
+│   └── seguranca-appsec/SKILL.md    # Playbook reutilizável de AppSec + LLM
 └── app/
     ├── config.py                    # Settings centralizadas (pydantic-settings)
     ├── database.py                  # Models SQLAlchemy + factory de session
-    ├── catalog_engine.py            # Text-to-SQL + ferramentas LangChain do catálogo
+    ├── security.py                  # Guardrails de prompt injection · PII masking · validação SQL/slug
+    ├── audit.py                     # Audit log com hash de conteúdo (LGPD)
+    ├── ratelimit.py                 # Rate limiting em memória (janela deslizante)
+    ├── middleware.py                # Security headers (CSP, HSTS, X-Frame-Options…)
+    ├── catalog_engine.py            # Text-to-SQL (read-only) + ferramentas LangChain do catálogo
     ├── skill_loader.py              # Carrega SKILL.md e injeta no system prompt
     ├── api/
-    │   ├── routes.py                # POST /chat (orquestrador principal)
-    │   ├── auth.py                  # /auth/login, users CRUD, JWT
-    │   ├── pitch.py                 # /pitches CRUD + interactions + PDF builder
-    │   ├── catalog.py               # /catalog import/export/sql/schema
-    │   ├── skills.py                # /skills CRUD (edição em runtime)
+    │   ├── routes.py                # POST /chat (orquestrador + guardrails + PII masking)
+    │   ├── auth.py                  # /auth login/setup/me/logout, users CRUD, JWT em cookie
+    │   ├── pitch.py                 # /pitches CRUD + interactions + PDF builder (ownership)
+    │   ├── catalog.py               # /catalog import/export/sql/schema (auth)
+    │   ├── skills.py                # /skills CRUD (auth + anti path traversal)
     │   └── schemas.py               # Pydantic contracts
     ├── agent/
-    │   ├── graph.py                 # LangGraph ReAct StateGraph
-    │   ├── prompts.py               # SALES_ORCHESTRATOR_PROMPT + outros
+    │   ├── graph.py                 # LangGraph ReAct StateGraph (timeout, max_tokens)
+    │   ├── prompts.py               # SALES_ORCHESTRATOR_PROMPT (+ seção de segurança)
     │   └── tools.py                 # tavily_search + think_tool (+ catalog tools)
     ├── observability/
     │   └── __init__.py              # LangFuse callback handler factory
-    ├── skills/                      # 9 skills versionados como SKILL.md
+    ├── skills/                      # 9 skills de VENDAS versionados como SKILL.md
     │   ├── briefing-empresa/SKILL.md
     │   ├── perfil-interlocutor/SKILL.md
     │   ├── tendencias-mercado/SKILL.md
@@ -166,8 +185,10 @@ claro-que-eu-vendo/
     │   ├── objecao-preco/SKILL.md
     │   └── follow-up/SKILL.md
     └── static/
-        └── index.html               # SPA single-file (1.2k linhas)
+        └── index.html               # SPA single-file (~1.2k linhas)
 ```
+
+> **Nota:** `.env` e `data/*.db` **não são versionados** (foram removidos do histórico e cobertos pelo `.gitignore`). Os skills em `app/skills/` são de domínio de vendas e **são injetados no prompt do agente**; o skill de segurança fica em `.claude/skills/` justamente para **não** contaminar o contexto do agente.
 
 ---
 
@@ -178,87 +199,147 @@ claro-que-eu-vendo/
 ```bash
 git clone https://github.com/sergiogaiotto/claro-que-eu-vendo.git
 cd claro-que-eu-vendo
-cp .env .env.local             # ou edite o .env diretamente
-# Edite com suas chaves reais — veja seção "Configuração"
+cp .env.example .env
+# Edite o .env com suas chaves e segredos — veja "Configuração"
+```
+
+Gere um segredo JWT forte:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 ### 2. Ambiente virtual + dependências
 
 ```bash
 python -m venv .venv
-# Linux/Mac:
-source .venv/bin/activate
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# Windows (Git Bash):
-source .venv/Scripts/activate
+source .venv/bin/activate          # Linux/Mac
+# .venv\Scripts\Activate.ps1        # Windows PowerShell
 
 pip install -r requirements.txt
 ```
 
-### 3. Execute
+### 3. Provisione o root e execute
 
 ```bash
+# Bootstrap do primeiro usuário via env (ver seção dedicada):
+export ROOT_USERNAME=admin
+export ROOT_PASSWORD='uma-senha-forte'
+
 python main.py
-# ou diretamente:
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# ou: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Abra `http://localhost:8000`. No primeiro login, qualquer username/senha cria automaticamente o usuário **root**.
+Abra `http://localhost:8000` e faça login com `ROOT_USERNAME` / `ROOT_PASSWORD`.
 
 ### 4. Docker
 
 ```bash
 docker build -t claro-que-eu-vendo .
-docker run -p 8000:8000 --env-file .env -v $(pwd)/data:/app/data claro-que-eu-vendo
+docker run -p 8000:8000 --env-file .env \
+  -e ROOT_USERNAME=admin -e ROOT_PASSWORD='uma-senha-forte' \
+  -v $(pwd)/data:/app/data claro-que-eu-vendo
 ```
+
+A imagem roda como usuário **não-root**, inclui `HEALTHCHECK` e usa `.dockerignore` para não copiar `.env`/`data`.
 
 ---
 
 ## Configuração — variáveis de ambiente
 
-| Variável | Default | Obrigatório | Descrição |
-|----------|---------|:-----------:|-----------|
-| `OPENAI_API_KEY` | — | ✅ | Chave da OpenAI ([platform.openai.com](https://platform.openai.com)) |
-| `OPENAI_MODEL` | `gpt-4o-mini` | | Modelo OpenAI |
-| `TAVILY_API_KEY` | — | ✅ | Chave Tavily ([tavily.com](https://www.tavily.com)) |
-| `LANGFUSE_PUBLIC_KEY` | — | | Observabilidade — desativada se vazia |
-| `LANGFUSE_SECRET_KEY` | — | | |
-| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | | Self-host suportado |
-| `LANGSMITH_API_KEY` | — | | Reservado |
-| `JWT_SECRET` | `change-me-in-production-...` | ⚠️ prod | Segredo do JWT — **trocar em produção** |
-| `JWT_ALGORITHM` | `HS256` | | |
-| `JWT_EXPIRE_MINUTES` | `480` (8h) | | |
-| `DATABASE_URL` | `sqlite:///./data/app.db` | | Postgres/MySQL via SQLAlchemy URL |
-| `APP_HOST` | `0.0.0.0` | | |
-| `APP_PORT` | `8000` | | |
-| `APP_ENV` | `development` | | |
+Todas as variáveis têm defaults seguros para desenvolvimento. Em produção, defina no mínimo `JWT_SECRET`, o bootstrap do root, as chaves de API e `COOKIE_SECURE=true`.
 
-O `_check_required_keys` em [main.py](main.py:17) **falha o startup** se `OPENAI_API_KEY` ou `TAVILY_API_KEY` estiverem vazias ou contiverem placeholders (`sk-your...`, `tvly-your...`). Mensagem clara apontando onde obter cada chave.
+### LLM e limites do agente
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `OPENAI_API_KEY` | — | Chave da OpenAI (necessária para o chat) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Modelo OpenAI |
+| `TAVILY_API_KEY` | — | Chave Tavily (necessária para busca web) |
+| `LLM_MAX_TOKENS` | `4096` | Teto de tokens por resposta (custo/latência) |
+| `LLM_REQUEST_TIMEOUT` | `60` | Timeout (s) por chamada ao LLM |
+| `AGENT_TIMEOUT_SECONDS` | `90` | Timeout wall-clock do agente inteiro |
+| `AGENT_RECURSION_LIMIT` | `12` | Máximo de ciclos ReAct |
+| `HISTORY_MAX_MESSAGES` | `20` | Truncamento do histórico |
+| `TAVILY_MAX_RESULTS` | `3` | Resultados por busca |
+| `TAVILY_FETCH_TIMEOUT` | `6` | Timeout (s) por página buscada |
+| `WEB_CONTENT_MAX_CHARS` | `6000` | Corte de conteúdo por página |
+
+### Autenticação, sessão e bootstrap
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `JWT_SECRET` | `change-me-...` | **Segredo de assinatura da sessão.** Em `APP_ENV=production` a app **recusa subir** com o default/curto |
+| `JWT_ALGORITHM` | `HS256` | |
+| `JWT_EXPIRE_MINUTES` | `480` (8h) | Expiração do token |
+| `COOKIE_NAME` | `cqv_session` | Nome do cookie de sessão |
+| `COOKIE_SECURE` | `false` | **`true` em produção** (HTTPS) — marca o cookie como Secure |
+| `COOKIE_SAMESITE` | `strict` | Mitiga CSRF |
+| `ROOT_USERNAME` | — | Cria o root no startup (com `ROOT_PASSWORD`) se não houver usuários |
+| `ROOT_PASSWORD` | — | Senha do root de bootstrap |
+| `SETUP_TOKEN` | — | Alternativa: habilita o setup via web exigindo este token secreto |
+
+### Rede, segurança e privacidade
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `ALLOWED_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000` | Allowlist de origens CORS (separadas por vírgula) |
+| `RATE_LIMIT_CHAT` | `20` | Requisições de chat por janela/IP |
+| `RATE_LIMIT_LOGIN` | `10` | Tentativas de login/setup por janela/IP |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Tamanho da janela do rate limit |
+| `PII_MASKING` | `true` | Mascara CPF/e-mail/telefone na saída do agente |
+
+### Observabilidade e infra
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | — | Observabilidade — desativada se vazias |
+| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Self-host suportado |
+| `DATABASE_URL` | `sqlite:///./data/app.db` | Postgres/MySQL via SQLAlchemy URL |
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | |
+| `APP_ENV` | `development` | `production` ativa o fail-fast do `JWT_SECRET` e o HSTS quando `COOKIE_SECURE=true` |
+
+Se `OPENAI_API_KEY`/`TAVILY_API_KEY` estiverem ausentes/placeholder, a app **sobe mesmo assim** (log de aviso) — os módulos de auth/catálogo/skills/pitch funcionam e o `/chat` degrada com mensagem clara.
+
+---
+
+## Provisionamento do primeiro usuário (bootstrap)
+
+Por segurança, **o login não cria mais usuários automaticamente** (fecha o sequestro de instância — VULN-03). O primeiro root é provisionado de uma destas formas:
+
+- **Opção A — via ambiente (recomendada):** defina `ROOT_USERNAME` e `ROOT_PASSWORD`. No startup, se não houver usuários, o root é criado com hash salgado. Faça login com essas credenciais.
+- **Opção B — setup via web com token:** defina `SETUP_TOKEN=<segredo>`. A tela de login exibe um campo **"Token de setup"**; informe usuário, senha e o token para criar o root (só funciona enquanto não há usuários e o token confere).
+
+Sem nenhuma das duas, a tela de login informa que é preciso configurar o servidor — este é o comportamento seguro esperado, não um bug.
 
 ---
 
 ## API REST — referência completa
 
-Todos os endpoints estão sob o prefixo `/api/v1`. CORS aberto (`allow_origins=["*"]` — restringir em produção).
+Todos os endpoints estão sob o prefixo `/api/v1`. **CORS é restrito por `ALLOWED_ORIGINS`** (sem wildcard). A sessão é um **cookie HttpOnly**; o frontend é servido pela própria app (same-origin), então o cookie acompanha as requisições automaticamente. Para clientes de API, também é aceito `Authorization: Bearer <token>`.
 
 ### Autenticação — `/auth`
 
-| Método | Path | Descrição |
-|--------|------|-----------|
-| `GET` | `/auth/has-users` | `{has_users: bool}` — frontend usa para decidir tela inicial |
-| `POST` | `/auth/login` | Body: `{username, password}` → `{token, user_id, username, role, display_name}`. **Bootstrap**: se não há usuários, cria root automaticamente. |
-| `POST` | `/auth/users` | Cria usuário (`role`: `root`, `admin`, `user`) |
-| `GET` | `/auth/users` | Lista usuários |
-| `PUT` | `/auth/users/{id}` | Atualiza display_name, role, profile, password |
-| `DELETE` | `/auth/users/{id}` | Remove (proteção: não pode remover último root) |
+| Método | Path | Auth | Descrição |
+|--------|------|:----:|-----------|
+| `GET` | `/auth/has-users` | — | `{has_users, setup_enabled}` — o frontend decide login vs. setup |
+| `POST` | `/auth/setup` | token | Cria o primeiro root; exige `SETUP_TOKEN` e `count==0`. Emite o cookie de sessão |
+| `POST` | `/auth/login` | — | `{username, password}` → dados públicos do usuário + **cookie HttpOnly**. Rate-limited; **não** cria usuários |
+| `POST` | `/auth/logout` | — | Limpa o cookie de sessão |
+| `GET` | `/auth/me` | sessão | Retorna o usuário autenticado (restaura sessão no reload) |
+| `POST` | `/auth/users` | admin | Cria usuário (`role`: `root`/`admin`/`user`) — **só root concede root** |
+| `GET` | `/auth/users` | admin | Lista usuários |
+| `PUT` | `/auth/users/{id}` | admin | Atualiza display/role/profile/senha — admin não modifica root nem promove a root |
+| `DELETE` | `/auth/users/{id}` | admin | Remove (não pode remover a si mesmo, o último root, e admin não remove root) |
+
+Senhas: **PBKDF2-HMAC-SHA256 salgado** (240k rounds), verificação timing-safe e re-hash transparente de hashes legados no login.
 
 ### Chat — `/chat`
 
-| Método | Path | Descrição |
-|--------|------|-----------|
-| `GET` | `/health` | `{status, version, agent}` |
-| `POST` | `/chat` | Endpoint principal do agente |
+| Método | Path | Auth | Descrição |
+|--------|------|:----:|-----------|
+| `GET` | `/health` | — | `{status, version, agent}` |
+| `POST` | `/chat` | sessão | Endpoint principal do agente — rate-limited |
 
 **ChatRequest:**
 ```json
@@ -266,57 +347,60 @@ Todos os endpoints estão sob o prefixo `/api/v1`. CORS aberto (`allow_origins=[
   "message": "Pesquise a empresa XYZ e prepare briefing",
   "history": [{"role": "user|assistant", "content": "..."}],
   "session_id": "uuid (opcional — gerado se ausente)",
-  "user_id": "string (vai para LangFuse)",
   "pitch_id": 42,
   "company_name": "ACME Ltda",
   "company_city": "São Paulo"
 }
 ```
 
-Se `pitch_id` + `user_id` informados, a interação é persistida em `pitch_interactions` (user + assistant). Se `company_name` ou `company_city` informados, a mensagem é prefixada com `[Contexto: Empresa: X, Cidade: Y]` antes de ir ao LLM — usado pelo orquestrador como filtro primário de desambiguação.
+Fluxo de segurança do `/chat`:
+
+- O usuário vem **do cookie de sessão** (não de `user_id` no corpo).
+- `message`, `company_name`, `company_city` e as mensagens `user` do `history` passam por um **guardrail de prompt injection**; entrada suspeita retorna `400`.
+- O contexto empresa/cidade e o conteúdo web são envolvidos em um bloco **`<<DADOS_NAO_CONFIAVEIS>>`** (separando dados de instruções).
+- A interação só é persistida se `pitch_id` pertencer ao usuário autenticado.
+- A resposta passa por **mascaramento de PII** (se `PII_MASKING=true`) antes de retornar.
 
 **ChatResponse:** `{response: "markdown da resposta", session_id: "uuid"}`
 
-**Tradução de erros** ([routes.py:50](app/api/routes.py:50)): erros da OpenAI são traduzidos em mensagens legíveis (chave inválida, rate limit, timeout) sem vazar stack traces.
-
-### Pitches — `/pitches`
+### Pitches — `/pitches`  (todos exigem sessão; ownership por token)
 
 | Método | Path | Descrição |
 |--------|------|-----------|
-| `GET` | `/pitches/?user_id=X&company=Y&liked_only=bool` | Lista pitches do usuário com filtros |
-| `POST` | `/pitches/?user_id=X` | Cria pitch (`{company_name}`) |
-| `POST` | `/pitches/interactions` | Adiciona interação manual (`{pitch_id, role, content}`) |
-| `PATCH` | `/pitches/interactions/{id}/like` | `{liked: true/false/null}` — marca trecho como destaque |
-| `PATCH` | `/pitches/interactions/{id}/note` | `{note: "anotação"}` |
-| `DELETE` | `/pitches/{id}` | Remove pitch + cascade interactions |
-| `GET` | `/pitches/{id}/pdf` | Gera **Guia de Bolso do Vendedor** em PDF |
+| `GET` | `/pitches/?company=Y&liked_only=bool` | Lista pitches **do usuário logado** (sem `user_id` no cliente) |
+| `POST` | `/pitches/` | Cria pitch (`{company_name}`) vinculado ao usuário |
+| `POST` | `/pitches/interactions` | Adiciona interação (valida que o pitch é do usuário) |
+| `PATCH` | `/pitches/interactions/{id}/like` | `{liked}` — só em interação própria |
+| `PATCH` | `/pitches/interactions/{id}/note` | `{note}` — só em interação própria |
+| `DELETE` | `/pitches/{id}` | Remove pitch próprio + cascade |
+| `GET` | `/pitches/{id}/pdf` | Gera **Guia de Bolso** do pitch próprio |
+
+Acesso a recurso de outro usuário retorna **404** (não vaza existência).
 
 ### Catálogo — `/catalog`
 
-| Método | Path | Descrição |
-|--------|------|-----------|
-| `GET` | `/catalog/schema` | Colunas + amostra de 3 registros + total de linhas |
-| `GET` | `/catalog/products?limit=50&offset=0` | Lista paginada |
-| `POST` | `/catalog/sql` | Body: `{sql: "SELECT ..."}` — **SELECT-only** |
-| `POST` | `/catalog/import` | multipart `file` (.csv) — drop & recreate |
-| `GET` | `/catalog/export` | Download CSV |
-| `DELETE` | `/catalog/` | Drop table |
+| Método | Path | Auth | Descrição |
+|--------|------|:----:|-----------|
+| `GET` | `/catalog/schema` | sessão | Colunas + amostra + total |
+| `GET` | `/catalog/products?limit=50&offset=0` | sessão | Lista paginada (parametrizada) |
+| `POST` | `/catalog/sql` | sessão | `{sql}` — **read-only real** (ver abaixo), rate-limited |
+| `POST` | `/catalog/import` | **admin** | multipart `.csv` (limite 5 MB) — drop & recreate |
+| `GET` | `/catalog/export` | sessão | Download CSV |
+| `DELETE` | `/catalog/` | **admin** | Drop table |
 
 ### Skills — `/skills`
 
-| Método | Path | Descrição |
-|--------|------|-----------|
-| `GET` | `/skills/` | Lista resumida (slug, name, objetivo, quando usar) |
-| `GET` | `/skills/{slug}` | Conteúdo completo do SKILL.md |
-| `POST` | `/skills/` | Cria skill — `slug` valida regex `^[a-z0-9\-]+$` |
-| `PUT` | `/skills/{slug}` | Edita skill em runtime (próxima request usa o novo) |
-| `DELETE` | `/skills/{slug}` | Remove skill |
+| Método | Path | Auth | Descrição |
+|--------|------|:----:|-----------|
+| `GET` | `/skills/` | sessão | Lista resumida |
+| `GET` | `/skills/{slug}` | sessão | Conteúdo do SKILL.md (não é mais público — VULN-16) |
+| `POST` | `/skills/` | **admin** | Cria skill — slug `^[a-z0-9\-]+$` |
+| `PUT` | `/skills/{slug}` | **admin** | Edita skill (slug validado anti-traversal) |
+| `DELETE` | `/skills/{slug}` | **admin** | Remove skill (slug validado) |
 
 ### Documentação automática
 
-FastAPI expõe Swagger e ReDoc:
-- `http://localhost:8000/docs` (Swagger UI)
-- `http://localhost:8000/redoc` (ReDoc)
+FastAPI expõe Swagger (`/docs`) e ReDoc (`/redoc`).
 
 ---
 
@@ -328,7 +412,7 @@ FastAPI expõe Swagger e ReDoc:
 users
 ├── id (PK)
 ├── username (UNIQUE, INDEXED)
-├── password_hash (SHA-256 hex)
+├── password_hash (pbkdf2_sha256$rounds$salt$hash — salgado)
 ├── role (root | admin | user)
 ├── display_name
 ├── profile_description
@@ -352,36 +436,33 @@ pitch_interactions
 
 ### `catalog.db` (SQLite — schema dinâmico)
 
-Tabela `produtos` é **criada em runtime** a partir do CSV importado. Cada coluna do CSV vira uma coluna `TEXT` (nome sanitizado por `_sanitize_col`). Índices são criados automaticamente em colunas que casam com `nome|name|produto|product|titulo|title|descricao` ([catalog_engine.py:74](app/catalog_engine.py:74)).
+Tabela `produtos` é **criada em runtime** a partir do CSV importado. Cada coluna do CSV vira uma coluna `TEXT` (nome sanitizado por `_sanitize_col` e identificadores citados). Índices são criados automaticamente em colunas que casam com `nome|name|produto|product|titulo|title|descricao`.
 
 ---
 
 ## Skills (SKILL.md) — como o agente raciocina
 
-Cada skill é um arquivo markdown em `app/skills/<slug>/SKILL.md` contendo:
-- **Objetivo** — quando o skill se aplica
-- **Quando usar** — gatilhos do vendedor
-- **Workflow** — passos numerados
-- **Formato de saída** — template de resposta
-- **Regras** — limites e obrigações
+Cada skill de vendas é um arquivo markdown em `app/skills/<slug>/SKILL.md` contendo **Objetivo**, **Quando usar**, **Workflow**, **Formato de saída** e **Regras**.
 
-Em **cada turn do chat**, [skill_loader.py](app/skill_loader.py:56) lê todos os SKILL.md, concatena dentro de um bloco `<Skills disponíveis>`, e injeta no `SALES_ORCHESTRATOR_PROMPT`. O orquestrador identifica qual skill se aplica e segue o workflow declarado.
+Em cada requisição de chat, [`app/skill_loader.py`](app/skill_loader.py) lê todos os SKILL.md, concatena dentro de um bloco `<Skills disponíveis>`, e injeta no `SALES_ORCHESTRATOR_PROMPT` (montado uma vez por requisição). O orquestrador identifica qual skill se aplica e segue o workflow declarado. **Editar um skill via UI** (tab Skills, restrita a admin) altera o comportamento na próxima request — sem deploy.
 
-**Editar um skill via UI** (tab Skills) altera o comportamento do agente na próxima request — sem deploy.
+O `SALES_ORCHESTRATOR_PROMPT` inclui uma **seção de segurança** instruindo o modelo a nunca revelar o system prompt/skills e a tratar blocos `<<DADOS_NAO_CONFIAVEIS>>` apenas como dados.
 
-### Os 9 skills disponíveis
+### Os 9 skills de vendas
 
 | Skill | Quando dispara |
 |-------|----------------|
-| `briefing-empresa` | Vendedor pede dossiê de uma empresa-alvo |
+| `briefing-empresa` | Dossiê de uma empresa-alvo |
 | `perfil-interlocutor` | Análise de uma pessoa (cargo, comunicação, gatilhos) |
 | `tendencias-mercado` | Panorama setorial atualizado |
 | `catalogo-match` | Cruza dores da empresa com produtos do catálogo |
-| `nbo-engine` | Monta proposta com Âncora + Acelerador + Expansão |
+| `nbo-engine` | Proposta com Âncora + Acelerador + Expansão |
 | `pitch-builder` | Script de vendas estruturado |
-| `botao-panico` | Suporte rápido durante reunião — respostas de 3-4 frases |
-| `objecao-preco` | Reposicionamento de "está caro" para valor |
+| `botao-panico` | Suporte rápido durante reunião (3-4 frases) |
+| `objecao-preco` | Reposiciona "está caro" para valor |
 | `follow-up` | Mensagem pós-reunião |
+
+> Além destes, o repositório traz um skill de **engenharia de segurança** reutilizável em `.claude/skills/seguranca-appsec/SKILL.md` — um playbook AppSec + OWASP LLM Top 10 aplicável a qualquer projeto.
 
 ---
 
@@ -389,180 +470,170 @@ Em **cada turn do chat**, [skill_loader.py](app/skill_loader.py:56) lê todos os
 
 ### Importação de CSV
 
-[catalog_engine.py:42](app/catalog_engine.py:42) recebe CSV (delimitador detectado automaticamente: `,` ou `;`), sanitiza nomes de coluna e faz **drop & recreate** da tabela `produtos`. Cada coluna vira `TEXT`, com `id INTEGER PRIMARY KEY AUTOINCREMENT` adicionado.
+[`app/catalog_engine.py`](app/catalog_engine.py) recebe CSV (delimitador `,` ou `;` autodetectado), sanitiza nomes de coluna e faz **drop & recreate** da tabela `produtos` (identificadores validados e citados). Upload limitado a 5 MB, exige UTF-8.
 
 ### Ferramentas do agente (LangChain Tools)
 
 | Tool | Função |
 |------|--------|
 | `catalog_list_tables` | Descobrir tabelas existentes |
-| `catalog_get_schema(table_name)` | Schema + amostra de dados — agente consulta antes de montar query |
-| `catalog_query(sql)` | Executa SELECT — bloqueia INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE |
-| `catalog_nbo_analyze(pain_points, max=5)` | Motor NBO — score por keyword match em todas as colunas de texto |
+| `catalog_get_schema(table_name)` | Schema + amostra — `table_name` **validado por whitelist** contra os identificadores existentes |
+| `catalog_query(sql)` | Executa **SELECT read-only** — ver segurança abaixo |
+| `catalog_nbo_analyze(pain_points, max=5)` | Motor NBO — score por keyword match; `max` limitado a 1..20 |
+
+### Execução SQL read-only (defesa em profundidade)
+
+`execute_catalog_sql` **não** depende de blocklist bypassável. Em cada consulta:
+
+1. Remove comentários e exige que a instrução comece com `SELECT`/`WITH`.
+2. `PRAGMA query_only = ON` — o SQLite recusa qualquer escrita no nível do engine (independe de capitalização/comentário/UNION).
+3. Apenas **uma instrução** (o driver recusa múltiplas).
+4. Bloqueia introspecção de `sqlite_master`/`sqlite_schema`.
+5. Limita as linhas retornadas.
 
 ### Algoritmo NBO
 
 1. Extrai keywords ≥4 chars dos pontos de dor (até 15 distintas).
-2. Para cada produto, calcula `score = Σ (keyword in qualquer_coluna ? 1 : 0)`.
-3. Ordena `score DESC`, retorna top-N.
-4. Renderiza em markdown com aderência em estrelas (★★★★☆) e ações sugeridas (`[[action: ...]]`).
-
-Query parametrizada com `?` placeholders — sem concatenação de string com input do usuário.
+2. Para cada produto, `score = Σ (keyword em qualquer coluna ? 1 : 0)`.
+3. Ordena `score DESC`, retorna top-N (query com placeholders `?`).
+4. Renderiza em markdown com aderência em estrelas (★★★★☆) e ações `[[action: ...]]`.
 
 ---
 
 ## Geração de PDF — Guia de Bolso do Vendedor
 
-[pitch.py:166](app/api/pitch.py:166) gera o PDF via ReportLab com:
+[`app/api/pitch.py`](app/api/pitch.py) gera o PDF via ReportLab (apenas para o dono do pitch) com:
 
-- **Capa** com nome da empresa, data, branding.
-- **Sumário** dinâmico (só seções com conteúdo).
-- **Classificação automática** das mensagens do agente em 6 grupos por keyword matching:
-  - `1. A Empresa` · `2. O Interlocutor` · `3. Pontos de Dor` · `4. Estratégia de Abordagem` · `5. Roteiro do Pitch` · `6. Produtos Recomendados (NBO)`
-- **Cards de produtos NBO** com borda colorida por tier:
-  - 🟧 Âncora · 🟦 Acelerador · 🟩 Expansão
-- **Tabela-resumo da proposta** com header, alternância de linhas, total destacado.
-- **Destaques do Vendedor** — trechos marcados com 👍.
-- **Anotações** do vendedor.
-- **Checklist Pré-Reunião** (8 itens).
-- Sanitização do nome do arquivo: regex `[^a-zA-Z0-9_\-]`, normalização Unicode `NFKD`.
-- Markdown→ReportLab com escape HTML (`<`, `>`, `&`).
+- **Capa** com nome da empresa, data, branding e **sumário** dinâmico.
+- **Classificação automática** das mensagens do agente em 6 grupos (`A Empresa`, `O Interlocutor`, `Pontos de Dor`, `Estratégia de Abordagem`, `Roteiro do Pitch`, `Produtos Recomendados (NBO)`).
+- **Cards de produtos NBO** por tier: 🟧 Âncora · 🟦 Acelerador · 🟩 Expansão.
+- **Tabela-resumo da proposta**, **Destaques (👍)**, **Anotações** e **Checklist Pré-Reunião**.
+- Markdown→ReportLab com **escape HTML** (`&`, `<`, `>`); action tags removidas do documento; filename sanitizado (`NFKD` + regex).
 
 ---
 
-## Observabilidade
+## Observabilidade e auditoria
 
-Cada chamada `/chat` cria um trace no LangFuse com:
-- `session_id` — agrupamento de turns da mesma conversa
-- `user_id` — para auditoria por vendedor
-- `trace_name="chat"`
-- Custos OpenAI por request (token in/out)
-- Latência por nó do grafo
-- Retries e erros
+**LangFuse (opcional):** cada `/chat` cria um trace com `session_id`, `user_id`, custos OpenAI, latência por nó e erros. Sem chaves configuradas, o handler é `None` e o agente roda normalmente; `handler.flush()` no `finally` garante que traces não se percam.
 
-Se as chaves do LangFuse não estiverem configuradas, o `create_langfuse_handler` retorna `None` silenciosamente e o agente roda normalmente. O `handler.flush()` é chamado no `finally` do endpoint para garantir que traces não sejam perdidos em caso de erro.
+**Audit log (LGPD):** [`app/audit.py`](app/audit.py) registra eventos de segurança (login, login_failed, setup, chat, chat_blocked, criação/edição/remoção de usuário e skill) com **quem, quando e IP**, guardando apenas o **hash SHA-256** do conteúdo sensível (não o texto) — rastreabilidade com minimização de dados.
 
 ---
 
 ## Segurança da Informação (SI / Cybersec)
 
-Esta é uma aplicação **com dados sensíveis** (pesquisas comerciais, perfis de pessoas, catálogos privados). As proteções abaixo estão implementadas; **leia os "alertas para produção"** antes de expor o app em rede pública.
+Esta aplicação lida com **dados sensíveis** (pesquisas comerciais, perfis de pessoas, catálogos privados). Ela passou por auditoria AppSec (OWASP LLM Top 10 2025 · OWASP ASVS · CWE · LGPD) e os **22 achados foram remediados** e verificados por teste fim a fim (inclusive XSS em navegador real). Abaixo, os controles por domínio; ao final, os pontos que ainda dependem do **ambiente de deploy**.
 
-### 🔐 Autenticação & Autorização
+### 🔐 Autenticação & sessão
 
-| Mecanismo | Implementação | Local |
-|-----------|---------------|-------|
-| JWT (HS256) | PyJWT, expiração 480 min, payload com `sub`, `username`, `role`, `exp` | [auth.py:23](app/api/auth.py:23) |
-| RBAC | 3 níveis: `root`, `admin`, `user` | [database.py:25](app/database.py:25) |
-| Bootstrap seguro | Primeiro login de qualquer username cria automaticamente o root | [auth.py:99](app/api/auth.py:99) |
-| Lockout prevention | Não permite remover o último usuário root | [auth.py:212](app/api/auth.py:212) |
-| Tratamento de token | `ExpiredSignatureError` e `InvalidTokenError` capturados explicitamente | [auth.py:41](app/api/auth.py:41) |
+| Controle | Implementação |
+|----------|---------------|
+| Hash de senha (VULN-02) | **PBKDF2-HMAC-SHA256 salgado** (240k rounds), compare timing-safe, re-hash de legado no login |
+| Sessão (VULN-08) | JWT em **cookie HttpOnly + SameSite=strict + Secure** (config.); sem token em `localStorage`; restauro via `/auth/me` |
+| Bootstrap (VULN-03) | Login **não cria** usuário; root vem de env ou `/setup` com `SETUP_TOKEN` e `count==0` |
+| Segredo JWT | **Fail-fast** no startup em produção se `JWT_SECRET` for padrão/curto |
+| RBAC & escalonamento | 3 papéis; **só root concede/gerencia root**; admin não se promove nem edita/remove root |
+| Anti-brute-force (AUS-01) | Rate limit em `/login` e `/setup` |
 
-### 🛡️ Proteção contra SQL Injection
+### 🛡️ Injeção (SQL / path)
 
-| Vetor | Mitigação | Local |
-|-------|-----------|-------|
-| `/catalog/sql` | **Whitelist SELECT-only** — bloqueia INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE | [catalog_engine.py:135](app/catalog_engine.py:135) |
-| NBO query builder | **Placeholders `?`** parametrizados — sem string concat com input | [catalog_engine.py:280](app/catalog_engine.py:280) |
-| Nomes de coluna do CSV | `_sanitize_col` — regex `[^\w]→_`, prefixo se começa com dígito | [catalog_engine.py:29](app/catalog_engine.py:29) |
-| Filtros ORM | SQLAlchemy parametriza queries por padrão | [pitch.py:84](app/api/pitch.py:84) |
+| Vetor | Mitigação |
+|-------|-----------|
+| `/catalog/sql` e `catalog_query` (VULN-01) | **Read-only real** (`PRAGMA query_only`, só SELECT/WITH, single-statement, bloqueio de `sqlite_master`, limite de linhas) |
+| `table_name` em PRAGMA/schema (VULN-14) | **Whitelist** + quoting de identificadores |
+| Slug de skill (VULN-13) | Regex + **resolução de caminho** confirmando que fica dentro de `SKILLS_DIR` — em `GET/PUT/DELETE` e no loader |
+| ORM/NBO | SQLAlchemy e placeholders `?` parametrizados |
 
-### 🚧 Validação de entrada
-
-- **Pydantic v2** em todos os endpoints — `Field(min_length=1, ...)`, type coercion, validação de schema.
-- Slug de skill com regex `^[a-z0-9\-]+$` — previne **path traversal** via `/skills/../etc/passwd` ([skills.py:28](app/api/skills.py:28)).
-- Validação de extensão `.csv` no upload ([catalog.py:66](app/api/catalog.py:66)).
-- Decode com `utf-8-sig` (remove BOM) — evita parse-confusion em CSVs do Excel ([catalog.py:70](app/api/catalog.py:70)).
-- Limite hard-coded `LIMIT 500` no `/catalog/products` (Query `le=500`).
-
-### 🧱 Hardening da camada LLM
+### 🤖 Camada LLM (OWASP LLM Top 10)
 
 | Risco | Mitigação |
 |-------|-----------|
-| Loop infinito de tool calls | `recursion_limit=30` no LangGraph ([graph.py:101](app/agent/graph.py:101)) |
-| Conteúdo HTML malicioso retornado por scrape | `markdownify` converte para markdown e trunca em **8000 chars** ([tools.py:36](app/agent/tools.py:36)) |
-| Abuse de busca | `max_results=3` no Tavily |
-| Vazamento de stack trace | Erros traduzidos para mensagens genéricas (chave inválida, rate limit, timeout) sem expor `str(exc)` em casos sensíveis ([routes.py:50](app/api/routes.py:50)) |
-| Prompt injection via dados pesquisados | Resposta passa pelo formato estruturado dos skills antes de chegar ao usuário (defesa parcial — leia abaixo) |
+| Prompt injection (VULN-04 · LLM01) | Guardrail de entrada (pt/en, leetspeak, inclui histórico) + envelope `<<DADOS_NAO_CONFIAVEIS>>` para contexto e web + reforço no system prompt |
+| Excessive Agency (VULN-15 · LLM06) | Tools de catálogo **somente leitura**; parâmetros validados; recursão limitada |
+| System Prompt Leakage (VULN-16 · LLM07) | `/skills` exige login; instrução de confidencialidade no prompt |
+| Unbounded Consumption (VULN-10/15 · LLM10) | `max_tokens`, `request_timeout`, **timeout wall-clock**, histórico truncado, rate limit no `/chat` |
+| Insecure Output (LLM02/05) | **PII masking** na saída; ver XSS |
 
-### 📄 Hardening do gerador de PDF
+### 🖥️ Saída e XSS (VULN-07)
 
-- **HTML escaping** em `md_to_rl` — `&`, `<`, `>` substituídos antes de virar tag ReportLab ([pitch.py:266](app/api/pitch.py:266)).
-- Sanitização do filename: `unicodedata.NFKD` + regex `[^a-zA-Z0-9_\-]` + colapso de underscores duplicados ([pitch.py:887](app/api/pitch.py:887)).
-- Action tags `[[action: ...]]` removidas antes do render — não vazam para o documento exportado.
+- **Sanitização de URL** (só `http/https/mailto`; bloqueia `javascript:`/`data:`).
+- **DOMPurify** aplicado ao HTML derivado da saída do LLM, com **fallback seguro** se o CDN não carregar.
+- Botões de ação via **`data-action` + delegação** (sem `onclick` inline vindo do modelo).
+- Todos os sinks `innerHTML` do frontend usam escape/`safeHTML` (inclui nomes de coluna do catálogo).
 
-### 🕵️ Privacidade & Auditoria
+### 🌐 Transporte, CORS e headers
 
-- **Sem logs de conteúdo de chat** no servidor — só metadados (session_id, user_id) vão para LangFuse.
-- User-Agent forjado nas buscas web (`Mozilla/5.0 ... Chrome/131`) — não revela User-Agent do servidor ([tools.py:17](app/agent/tools.py:17)).
-- Histórico de pitches isolado por `user_id` — query sempre filtra `Pitch.user_id == user_id`.
-- Cascade delete em `pitch_interactions` — ao remover pitch, todas as interações são apagadas atomicamente.
+- **CORS por allowlist** (`ALLOWED_ORIGINS`) — sem `*` com credenciais (VULN-05).
+- **Security headers** (AUS-05) via middleware: `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `HSTS` (quando HTTPS).
 
-### ⚠️ Alertas para produção (hardening recomendado)
+### 🗂️ Privacidade, auditoria e higiene de repositório
 
-A aplicação está **pronta para uso interno / desenvolvimento**, mas os pontos abaixo precisam ser tratados antes de exposição pública:
-
-| Risco | Status atual | Ação recomendada |
-|-------|--------------|------------------|
-| **Hash de senha SHA-256 sem salt** | `hashlib.sha256(password.encode()).hexdigest()` ([auth.py:19](app/api/auth.py:19)) | Migrar para **bcrypt** ou **argon2-cffi** (`pip install bcrypt`) — SHA-256 é vulnerável a rainbow tables |
-| **CORS totalmente aberto** | `allow_origins=["*"]` ([main.py:42](main.py:42)) | Restringir a domínios específicos: `["https://app.suaempresa.com.br"]` |
-| **JWT_SECRET default fraco** | String literal `"change-me-in-production-..."` ([config.py:27](app/config.py:27)) | **Obrigatoriamente** definir `JWT_SECRET` ≥32 bytes random em produção (`openssl rand -hex 32`) |
-| **Sem rate limiting** | Endpoints `/auth/login`, `/chat`, `/catalog/sql` aceitam tráfego ilimitado | Adicionar [`slowapi`](https://github.com/laurentS/slowapi) ou nginx/Cloudflare |
-| **Sem CSRF token** | API stateless via JWT — aceitável se token for armazenado em `Authorization` header (não em cookie) | Garantir que frontend NUNCA persista JWT em cookie sem `SameSite=Strict` + `HttpOnly` |
-| **Token via query string** em [auth.py:34](app/api/auth.py:34) | `get_current_user(token: str = "")` aceita token em query | Migrar para `Depends(HTTPBearer())` — token só em header `Authorization: Bearer` |
-| **Sem validação de tamanho de upload** | `/catalog/import` aceita CSV de qualquer tamanho | Adicionar `Content-Length` check e `MAX_UPLOAD_SIZE` |
-| **`check_same_thread=False` no SQLite** | Necessário para FastAPI async, mas requer cuidado | Em produção, migrar para Postgres (`DATABASE_URL=postgresql://...`) |
-| **HTTPS** | Servido via uvicorn HTTP plain | Coloque atrás de nginx/Caddy/Traefik com TLS terminator |
-| **Logs de auditoria** | Apenas LangFuse (chat) | Adicionar log estruturado de eventos de auth (login success/fail, criação de usuário, edição de skill) |
-| **Edição de Skills sem audit log** | `PUT /skills/{slug}` reescreve o arquivo sem trilha | Versionar `SKILL.md` em git ou registrar `who+when` em tabela |
-| **Prompt injection via dados pesquisados** | Tavily retorna conteúdo de páginas externas que entra no contexto do LLM | Considerar sandbox de tool outputs (XML wrappers, instruction reinforcement) |
-| **Dados em repouso não criptografados** | SQLite arquivo `.db` em disco | Em servidor compartilhado, criptografar volume (LUKS, BitLocker) ou usar Postgres com TDE |
+- **Audit log** com hash de conteúdo (AUS-04 · LGPD).
+- **Sem segredos no versionamento** (VULN-11): `.gitignore`/`.dockerignore`; `.env` e `*.db` removidos do repositório; `.env.example` como modelo.
+- **Dependências pinadas** com upper bound (VULN-12).
+- **Dockerfile endurecido** (AUS-06): usuário não-root, `HEALTHCHECK`, `.dockerignore`.
+- Rate limiter com **eviction** de chaves ociosas (não vaza memória).
 
 ### 🔬 Threat model resumido
 
 | Ameaça | Vetor | Status |
 |--------|-------|:------:|
-| SQL Injection no `/catalog/sql` | User envia `DROP TABLE` | ✅ bloqueado |
-| Path traversal em skills | `/skills/../../etc/passwd` | ✅ regex slug |
-| XSS no PDF exportado | Markdown malicioso vira HTML no ReportLab | ✅ escape `&`, `<`, `>` |
-| Brute force de senha | Login repetido | ⚠️ sem rate limit |
-| Rainbow table de hash | DB exfiltrado, senhas crackadas | ⚠️ SHA-256 sem salt |
-| Token sniffing | Token em query string aparece em logs do servidor | ⚠️ aceito via query |
-| Lockout administrativo | Remoção de todos os roots | ✅ guarda explícita |
-| Prompt injection | Conteúdo malicioso em página pesquisada | ⚠️ defesa parcial |
+| SQL Injection no `/catalog/sql` | `DELETE`/`DROP`/UNION/comentário/multi-statement | ✅ read-only real |
+| SQLi via `table_name` | PRAGMA com input do LLM | ✅ whitelist |
+| Path traversal em skills | `GET/PUT/DELETE /skills/../..` | ✅ validação de caminho |
+| IDOR | acessar pitch/dados de outro usuário | ✅ ownership → 404 |
+| Escalonamento admin→root | admin cria/promove root | ✅ bloqueado |
+| Brute force de senha | login repetido | ✅ rate limit |
+| Rainbow table | DB exfiltrado | ✅ PBKDF2 salgado |
+| Token roubado via XSS | ler JWT do `localStorage` | ✅ cookie HttpOnly |
+| XSS (saída do LLM) | `javascript:`/`onerror`/action | ✅ sanitização + DOMPurify |
+| Prompt injection | override no input/web/histórico | ✅ guardrail + isolamento (defesa em camadas) |
+| Custo/DoS de LLM | prompt caro / flood | ✅ max_tokens + timeout + rate limit |
+| CORS abusivo | site terceiro com credenciais | ✅ allowlist |
+
+### ⚠️ Depende do ambiente de deploy (não é código)
+
+| Ponto | Ação |
+|-------|------|
+| **HTTPS + cookie Secure** | Sirva atrás de TLS (Render/Caddy/nginx) e defina `COOKIE_SECURE=true` |
+| **Segredos definidos** | `JWT_SECRET` forte, bootstrap do root e chaves de API nas envs do provedor |
+| **Persistência do SQLite** | Discos efêmeros (ex.: Render) apagam `data/*.db` a cada deploy — use disco persistente ou Postgres (`DATABASE_URL=postgresql://...`) |
+| **Rate limit multi-réplica** | O limiter é em memória (por instância); para várias réplicas, use Redis |
+| **CSP com `unsafe-inline`** | A UI usa handlers/estilos inline (Tailwind); a CSP permite `unsafe-inline` em script/style. Endurecer exige refatorar a SPA |
+| **SAST/SCA no CI** | Recomenda-se Semgrep/CodeQL + `pip-audit`/Dependabot |
 
 ---
 
 ## Operação e deploy
 
-### Backup
+### Deploy no Render (exemplo)
 
-- **Volume `data/`** contém `app.db` + `catalog.db`. Backup periódico recomendado (cron + `sqlite3 .backup`).
-- Em produção, prefira **Postgres** com replica + WAL archiving.
+1. Conecte o repositório e escolha *Web Service* (build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`).
+2. Em **Environment**, defina: `JWT_SECRET` (forte), `ROOT_USERNAME` + `ROOT_PASSWORD` (ou `SETUP_TOKEN`), `COOKIE_SECURE=true`, `ALLOWED_ORIGINS=https://<seu-app>.onrender.com`, `OPENAI_API_KEY`, `TAVILY_API_KEY`.
+3. Para **persistir dados**, adicione um *Persistent Disk* montado (ex.: `/var/data`) e defina `DATABASE_URL=sqlite:////var/data/app.db`. Sem isso, os dados são recriados a cada deploy (o root de env é recriado, mas pitches/usuários se perdem).
 
-### Logs
+### Backup e logs
 
-- uvicorn em stdout/stderr — capturar via systemd, Docker logging driver, ou agregador (Loki, CloudWatch).
-- Erros 5xx do FastAPI vêm com `detail` legível — útil para debugging sem expor stack trace ao cliente.
+- **Volume `data/`** contém `app.db` + `catalog.db` (backup via `sqlite3 .backup`); em produção, prefira Postgres com WAL/replica.
+- uvicorn escreve em stdout/stderr; o audit log usa o logger `cqv.audit`. Capture via systemd, Docker logging driver ou agregador (Loki, CloudWatch).
 
 ### Health checks
 
-`GET /api/v1/health` retorna `{"status": "ok", "version": "1.0.0", "agent": "Claro que Eu vendo!"}`. Use em probes de Kubernetes/load balancer.
+`GET /api/v1/health` → `{"status": "ok", ...}`. Use em probes de LB/Kubernetes (o Dockerfile também traz `HEALTHCHECK`).
 
 ### Custos LLM
 
-- gpt-4o-mini é o default (≈$0.15 / 1M input, ≈$0.60 / 1M output em maio/2026).
-- Tavily oferece tier free de 1k buscas/mês.
-- Monitore custos via LangFuse dashboard.
+- `gpt-4o-mini` default; `max_tokens`, timeout e truncamento de histórico contêm o custo por request. Monitore via LangFuse.
 
 ---
 
 ## Base conceitual
 
 Inspirado em:
-- [LangChain deepagents/deep_research](https://github.com/langchain-ai/deepagents) — adaptado para inteligência de vendas B2B com padrão **ReAct** (Reasoning + Acting) via LangGraph.
-- Estratégia **NBO (Next Best Offer)** — combinação Âncora + Acelerador + Expansão.
-- Padrão **Skills as Code** — comportamento do agente versionado em SKILL.md, editável em runtime sem deploy.
+- [LangChain deepagents/deep_research](https://github.com/langchain-ai/deepagents) — padrão **ReAct** via LangGraph, adaptado para inteligência de vendas B2B.
+- Estratégia **NBO (Next Best Offer)** — Âncora + Acelerador + Expansão.
+- Padrão **Skills as Code** — comportamento do agente versionado em SKILL.md, editável em runtime.
+- **OWASP LLM Top 10 (2025)** e **OWASP ASVS** — base da postura de segurança (ver [`.claude/skills/seguranca-appsec/SKILL.md`](.claude/skills/seguranca-appsec/SKILL.md)).
 
 ---
 
