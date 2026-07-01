@@ -15,8 +15,12 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from app.config import get_settings
+from app.security import is_safe_identifier, quote_identifier
 
 CATALOG_DB_PATH = os.path.join("data", "catalog.db")
+
+# Limite de linhas retornadas por uma consulta ad-hoc (evita respostas gigantes).
+_MAX_SQL_ROWS = 1000
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -24,6 +28,30 @@ def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(CATALOG_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _existing_tables(conn: sqlite3.Connection) -> set[str]:
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    return {r[0] for r in cur.fetchall()}
+
+
+def _safe_table(conn: sqlite3.Connection, table_name: str) -> str:
+    """Valida table_name contra os identificadores existentes e retorna a forma citada.
+
+    Bloqueia interpolação arbitrária em PRAGMA/SELECT (VULN-14). Levanta
+    ValueError se o nome for inválido ou não existir.
+    """
+    if not is_safe_identifier(table_name):
+        raise ValueError(f"Nome de tabela inválido: {table_name!r}")
+    if table_name not in _existing_tables(conn):
+        raise ValueError(f"Tabela não encontrada: {table_name!r}")
+    return quote_identifier(table_name)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    sql = re.sub(r"--[^\n]*", " ", sql)
+    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    return sql.strip()
 
 
 def _sanitize_col(name: str) -> str:
@@ -47,17 +75,21 @@ def import_csv_to_catalog(content: str, table_name: str = "produtos") -> dict:
     if not reader.fieldnames:
         return {"error": "CSV sem cabeçalhos detectados", "imported": 0}
 
+    if not is_safe_identifier(table_name):
+        return {"error": "Nome de tabela inválido", "imported": 0}
+
     original_fields = [f.strip() for f in reader.fieldnames if f.strip()]
     sql_fields = [_sanitize_col(f) for f in original_fields]
     field_map = dict(zip(original_fields, sql_fields))
 
     conn = _get_conn()
     cur = conn.cursor()
+    qtable = quote_identifier(table_name)
 
     # Drop e recria a tabela (fresh import)
-    cur.execute(f"DROP TABLE IF EXISTS {table_name}")
+    cur.execute(f"DROP TABLE IF EXISTS {qtable}")
     cols_def = ", ".join(f'"{c}" TEXT' for c in sql_fields)
-    cur.execute(f'CREATE TABLE {table_name} (id INTEGER PRIMARY KEY AUTOINCREMENT, {cols_def})')
+    cur.execute(f'CREATE TABLE {qtable} (id INTEGER PRIMARY KEY AUTOINCREMENT, {cols_def})')
 
     # Insere dados
     placeholders = ", ".join(["?"] * len(sql_fields))
@@ -65,7 +97,7 @@ def import_csv_to_catalog(content: str, table_name: str = "produtos") -> dict:
     count = 0
     for row in reader:
         values = [row.get(orig, "").strip() for orig in original_fields]
-        cur.execute(f"INSERT INTO {table_name} ({cols_insert}) VALUES ({placeholders})", values)
+        cur.execute(f"INSERT INTO {qtable} ({cols_insert}) VALUES ({placeholders})", values)
         count += 1
 
     conn.commit()
@@ -74,7 +106,7 @@ def import_csv_to_catalog(content: str, table_name: str = "produtos") -> dict:
     for col in sql_fields:
         if any(kw in col for kw in ["nome", "name", "produto", "product", "titulo", "title", "descricao"]):
             try:
-                cur.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON {table_name}("{col}")')
+                cur.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON {qtable}("{col}")')
             except Exception:
                 pass
 
@@ -94,7 +126,8 @@ def export_catalog_csv(table_name: str = "produtos") -> str:
     conn = _get_conn()
     cur = conn.cursor()
     try:
-        cur.execute(f"SELECT * FROM {table_name}")
+        qtable = _safe_table(conn, table_name)
+        cur.execute(f"SELECT * FROM {qtable}")
         rows = cur.fetchall()
         if not rows:
             return ""
@@ -116,13 +149,14 @@ def get_catalog_schema(table_name: str = "produtos") -> dict:
     conn = _get_conn()
     cur = conn.cursor()
     try:
-        cur.execute(f"PRAGMA table_info({table_name})")
+        qtable = _safe_table(conn, table_name)
+        cur.execute(f"PRAGMA table_info({qtable})")
         columns = [{"name": r[1], "type": r[2]} for r in cur.fetchall()]
-        cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+        cur.execute(f"SELECT COUNT(*) FROM {qtable}")
         count = cur.fetchone()[0]
 
         # Amostra de 3 registros
-        cur.execute(f"SELECT * FROM {table_name} LIMIT 3")
+        cur.execute(f"SELECT * FROM {qtable} LIMIT 3")
         sample_rows = [dict(r) for r in cur.fetchall()]
 
         return {"table": table_name, "columns": columns, "row_count": count, "sample": sample_rows}
@@ -133,26 +167,40 @@ def get_catalog_schema(table_name: str = "produtos") -> dict:
 
 
 def execute_catalog_sql(query: str) -> list[dict]:
-    """Executa query SQL read-only no catálogo."""
-    forbidden = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE"]
-    upper = query.upper().strip()
-    for kw in forbidden:
-        if kw in upper and kw != "CREATE":  # permite CREATE INDEX internamente
-            raise ValueError(f"Operação {kw} não permitida. Apenas SELECT.")
+    """Executa query SQL estritamente read-only no catálogo (VULN-01).
+
+    Defesa em profundidade (não é blocklist bypassável):
+    1. Apenas uma instrução (sqlite `execute` recusa múltiplas).
+    2. A instrução DEVE começar com SELECT ou WITH (após remover comentários).
+    3. `PRAGMA query_only = ON` — o SQLite recusa qualquer escrita no nível do
+       engine, independentemente de capitalização/comentários/UNION.
+    4. Linhas limitadas a _MAX_SQL_ROWS.
+    """
+    stripped = _strip_sql_comments(query)
+    if not stripped:
+        raise ValueError("Consulta vazia.")
+    if not re.match(r"(?is)^(select|with)\b", stripped):
+        raise ValueError("Apenas consultas SELECT são permitidas.")
+    # Bloqueia introspecção do schema interno (defesa em profundidade).
+    if re.search(r"(?i)\bsqlite_(master|schema|temp_master)\b", stripped):
+        raise ValueError("Acesso a tabelas internas do SQLite não é permitido.")
 
     conn = _get_conn()
-    cur = conn.cursor()
     try:
-        cur.execute(query)
-        rows = cur.fetchall()
+        conn.execute("PRAGMA query_only = ON")
+        cur = conn.cursor()
+        cur.execute(query)  # múltiplas instruções são rejeitadas pelo sqlite3
+        rows = cur.fetchmany(_MAX_SQL_ROWS)
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
 def clear_catalog(table_name: str = "produtos"):
+    if not is_safe_identifier(table_name):
+        raise ValueError("Nome de tabela inválido")
     conn = _get_conn()
-    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+    conn.execute(f"DROP TABLE IF EXISTS {quote_identifier(table_name)}")
     conn.commit()
     conn.close()
 
@@ -238,6 +286,10 @@ def catalog_nbo_analyze(company_pain_points: str, max_recommendations: int = 5) 
         company_pain_points: Descrição dos pontos de dor/necessidades da empresa-alvo.
         max_recommendations: Número máximo de recomendações (padrão: 5).
     """
+    try:
+        max_recommendations = max(1, min(int(max_recommendations), 20))
+    except (TypeError, ValueError):
+        max_recommendations = 5
     info = get_catalog_schema("produtos")
     if "error" in info or info.get("row_count", 0) == 0:
         return "Catálogo vazio. Importe produtos na aba Catálogo antes de usar o NBO."

@@ -2,13 +2,18 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.agent import run_agent
+from app.api.auth import get_current_user
 from app.api.schemas import ChatRequest, ChatResponse, HealthResponse
-from app.database import Pitch, PitchInteraction, get_db
+from app.audit import audit_log
+from app.config import get_settings
+from app.database import Pitch, PitchInteraction, User, get_db
 from app.observability import create_langfuse_handler
+from app.ratelimit import rate_limiter
+from app.security import PromptInjectionError, check_user_input, mask_pii, wrap_untrusted
 
 router = APIRouter()
 
@@ -19,12 +24,30 @@ async def health():
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: Session = Depends(get_db)):
+async def chat(
+    request: ChatRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    _rl=Depends(rate_limiter("chat", 20, 60)),
+):
+    cfg = get_settings()
+    ip = http_request.client.host if http_request.client else None
+
+    # Guardrail de entrada — bloqueia prompt injection (VULN-04 / LLM01).
+    try:
+        check_user_input(request.message, request.company_name, request.company_city)
+    except PromptInjectionError as exc:
+        audit_log("chat_blocked", user_id=user.id, message=request.message, ip=ip)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    audit_log("chat", user_id=user.id, message=request.message, ip=ip)
+
     session_id = request.session_id or str(uuid.uuid4())
     callbacks = []
     handler = create_langfuse_handler(
         session_id=session_id,
-        user_id=request.user_id,
+        user_id=str(user.id),
         trace_name="chat",
     )
     if handler:
@@ -39,7 +62,9 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
                 ctx_parts.append(f"Empresa: {request.company_name}")
             if request.company_city:
                 ctx_parts.append(f"Cidade: {request.company_city}")
-            message = f"[Contexto: {', '.join(ctx_parts)}]\n\n{message}"
+            # Contexto vem do usuário — trata como dado não confiável (Vetor 1).
+            context_block = wrap_untrusted("contexto_usuario", ", ".join(ctx_parts))
+            message = f"{context_block}\n\n{message}"
 
         response = await run_agent(
             message=message,
@@ -62,8 +87,15 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         if handler:
             handler.flush()
 
-    if request.pitch_id and request.user_id:
-        pitch = db.query(Pitch).filter(Pitch.id == request.pitch_id).first()
+    # Mascaramento de PII na saída (AUS-02 / LLM02).
+    if cfg.pii_masking:
+        response = mask_pii(response)
+
+    # Persiste a interação apenas se o pitch pertencer ao usuário autenticado.
+    if request.pitch_id:
+        pitch = db.query(Pitch).filter(
+            Pitch.id == request.pitch_id, Pitch.user_id == user.id
+        ).first()
         if pitch:
             db.add(PitchInteraction(
                 pitch_id=pitch.id, role="user", content=request.message,

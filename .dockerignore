@@ -1,0 +1,28 @@
+# Segredos e dados locais — não entram na imagem (AUS-06)
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# VCS / metadados
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Docs / IDE
+*.md
+.idea/
+.vscode/
+*.log
+.DS_Store

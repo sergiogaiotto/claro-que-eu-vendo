@@ -4,7 +4,9 @@ Implementa o padrão ReAct (Reasoning + Acting) usando LangGraph,
 inspirado na arquitetura do deep_research framework.
 """
 
+import asyncio
 from datetime import datetime
+from functools import lru_cache
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -18,13 +20,23 @@ from app.config import get_settings
 from app.skill_loader import build_skills_context
 
 
-def _build_llm() -> ChatOpenAI:
+@lru_cache(maxsize=1)
+def _base_llm() -> ChatOpenAI:
+    """LLM base reutilizado entre requisições (cliente HTTP compartilhado).
+
+    max_tokens + timeout limitam custo e latência por chamada
+    (VULN-10 Unbounded Consumption). streaming=False para que o timeout
+    delimite a chamada inteira de forma previsível.
+    """
     cfg = get_settings()
     return ChatOpenAI(
         model=cfg.openai_model,
         api_key=cfg.openai_api_key,
         temperature=0.3,
-        streaming=True,
+        streaming=False,
+        max_tokens=cfg.llm_max_tokens,
+        timeout=cfg.llm_request_timeout,
+        max_retries=1,
     )
 
 
@@ -36,22 +48,21 @@ def _should_continue(state: MessagesState) -> str:
     return END
 
 
-def _agent_node(state: MessagesState) -> dict[str, Any]:
-    """Nó principal do agente — raciocina e decide ações."""
-    llm = _build_llm().bind_tools(TOOLS)
+async def _agent_node(state: MessagesState) -> dict[str, Any]:
+    """Nó principal do agente — raciocina e decide ações (assíncrono e cancelável)."""
+    llm = _base_llm().bind_tools(TOOLS)
 
-    system_prompt = SALES_ORCHESTRATOR_PROMPT.format(
-        date=datetime.now().strftime("%Y-%m-%d"),
-        skills_context=build_skills_context(),
-    )
+    messages = list(state["messages"])
+    # O system prompt (com skills) é montado uma única vez por requisição:
+    # nas iterações seguintes a SystemMessage já está no estado.
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        system_prompt = SALES_ORCHESTRATOR_PROMPT.format(
+            date=datetime.now().strftime("%Y-%m-%d"),
+            skills_context=build_skills_context(),
+        )
+        messages = [SystemMessage(content=system_prompt)] + messages
 
-    messages = state["messages"]
-    has_system = any(isinstance(m, SystemMessage) for m in messages)
-
-    if not has_system:
-        messages = [SystemMessage(content=system_prompt)] + list(messages)
-
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     return {"messages": [response]}
 
 
@@ -69,12 +80,22 @@ def create_sales_agent() -> StateGraph:
     return graph.compile()
 
 
+@lru_cache(maxsize=1)
+def _compiled_agent():
+    """Grafo compilado reutilizado entre requisições (evita recompilar sempre)."""
+    return create_sales_agent()
+
+
 async def run_agent(
     message: str,
     history: list[dict[str, str]] | None = None,
     callbacks: list | None = None,
 ) -> str:
     """Executa o agente e retorna a resposta final.
+
+    Aplica timeout wall-clock (AUS-03/VULN-15) e trunca o histórico
+    (VULN-10) para conter latência e custo — origem do timeout recorrente
+    na primeira consulta pesada de briefing.
 
     Args:
         message: Mensagem do usuário.
@@ -84,11 +105,13 @@ async def run_agent(
     Returns:
         Texto da resposta do agente.
     """
-    agent = create_sales_agent()
+    cfg = get_settings()
+    agent = _compiled_agent()
 
     messages: list = []
     if history:
-        for msg in history:
+        # Trunca o histórico às últimas N mensagens para limitar o contexto.
+        for msg in history[-cfg.history_max_messages:]:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "user":
@@ -98,11 +121,21 @@ async def run_agent(
 
     messages.append(HumanMessage(content=message))
 
-    config: dict[str, Any] = {"recursion_limit": 30}
+    config: dict[str, Any] = {"recursion_limit": cfg.agent_recursion_limit}
     if callbacks:
         config["callbacks"] = callbacks
 
-    result = await agent.ainvoke({"messages": messages}, config=config)
+    try:
+        result = await asyncio.wait_for(
+            agent.ainvoke({"messages": messages}, config=config),
+            timeout=cfg.agent_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        return (
+            "A pesquisa está demorando mais do que o esperado e foi interrompida "
+            "para não travar o atendimento. Tente uma pergunta mais específica "
+            "(por exemplo, foque em um único aspecto da empresa ou interlocutor)."
+        )
 
     final_messages = result["messages"]
     for msg in reversed(final_messages):
